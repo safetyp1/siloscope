@@ -11,14 +11,15 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=icon16-20260908-r1">
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png?v=icon16-20260908-r1">
     <link rel="manifest" href="/site.webmanifest?v=icon16-20260908-r1">
-    <link rel="stylesheet" href="/styles.css?v=navigation-focus-20260914-r1">
-    <script src="/preferences.js" defer></script>
-    <script src="/activity.js?v=navigation-focus-20260914-r1" defer></script>
-    <script src="/app.js?v=silo-v2-20260914-r1" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=build-centered-20260920-r3">
+    <script src="/preferences.js?v=enhancements-20260920-r1" defer></script>
+    <script src="/activity.js?v=enhancements-20260920-r1" defer></script>
+    <script src="/app.js?v=enhancements-20260920-r1" defer></script>
     <script src="/transcoder.js?v=silo-v2-20260914-r1" defer></script>
     <script src="/restart.js" defer></script>
     <script src="/notifications.js?v=service-alerts-20260913-r1" defer></script>
-    <script src="/settings.js?v=settings-groups-20260910-r1" defer></script>
+    <script src="/settings.js?v=enhancements-20260920-r1" defer></script>
+    <script src="/library.js?v=episode-search-20260920-r4" defer></script>
   </head>
   <body>
     <header class="topbar view-banner">
@@ -30,6 +31,7 @@
           <div>
             <p class="eyebrow">Silo API Server</p>
             <h2 id="resources-heading">Server pulse</h2>
+            <p id="server-build" class="metric-detail">Build unavailable</p>
           </div>
           <span id="connection-status" class="live-indicator status-offline" role="status" aria-label="Disconnected"></span>
         </div>
@@ -155,6 +157,15 @@
           <div class="activity-heading">
             <button id="activity-back" class="icon-button" type="button" aria-label="Back to Now Playing" title="Back to Now Playing"><span class="ui-icon icon-back" aria-hidden="true"></span></button>
             <h2 id="activity-heading" tabindex="-1">History</h2>
+            <div class="history-filter">
+              <button id="activity-filter" class="icon-button" type="button" aria-label="Filter history: All" title="Filter history: All" aria-expanded="false" aria-controls="activity-filter-menu"><span class="ui-icon icon-filter" aria-hidden="true"></span></button>
+              <fieldset id="activity-filter-menu" hidden>
+                <legend>Player</legend>
+                <label><input type="radio" name="history-source" value="all" checked>All</label>
+                <label><input type="radio" name="history-source" value="silo">Silo</label>
+                <label><input type="radio" name="history-source" value="plex">Plex</label>
+              </fieldset>
+            </div>
           </div>
           <p id="activity-status" class="inline-message" role="status">Loading activity...</p>
           <ol id="activity-list" class="activity-list"></ol>
@@ -183,7 +194,33 @@
         </div>
         <p id="settings-status" class="settings-status" role="status"></p>
       </section>
+      <section class="library-section" data-view="library" aria-labelledby="library-heading" hidden>
+        <div class="section-heading">
+          <div><h2 id="library-heading">Library</h2></div>
+          <button id="library-refresh" class="icon-button" type="button" title="Refresh library status" aria-label="Refresh library status"><span class="ui-icon icon-refresh" aria-hidden="true"></span></button>
+        </div>
+        <form id="library-search" role="search">
+          <fieldset class="library-sources"><legend class="visually-hidden">Library source</legend><label><input type="radio" name="library-source" value="radarr" checked>Movies</label><label><input type="radio" name="library-source" value="sonarr">TV</label></fieldset>
+          <label class="library-query-label"><span class="visually-hidden">Search existing library</span><input id="library-query" type="search" placeholder="Search library" maxlength="200" autocomplete="off"></label>
+        </form>
+        <div class="library-series-heading"><button id="library-back" class="icon-button" type="button" aria-label="Back to series search" title="Back to series search" hidden><span class="ui-icon icon-back" aria-hidden="true"></span></button><h3 id="library-series"></h3></div>
+        <p id="library-status" class="inline-message" role="status"></p>
+        <ol id="library-results" class="library-list"></ol>
+        <button id="library-more" class="settings-command" type="button" hidden>Show more</button>
+        <div class="library-operation-heading"><h3>Recent replacements</h3></div>
+        <p id="library-operation-status" class="inline-message" role="status"></p>
+        <ol id="library-operations" class="library-list"></ol>
+      </section>
     </main>
+
+    <dialog id="replacement-dialog" aria-labelledby="replacement-heading">
+      <h2 id="replacement-heading">Replace file?</h2>
+      <strong id="replacement-title"></strong>
+      <p id="replacement-file" class="metric-detail"></p>
+      <p>The current file will be deleted before an automatic search. This can interrupt playback. No replacement is guaranteed, and the same release may be downloaded again.</p>
+      <p id="replacement-status" class="inline-message" role="status"></p>
+      <div class="dialog-actions"><button id="replacement-cancel" class="settings-command" type="button">Cancel</button><button id="replacement-confirm" class="settings-command" type="button">Delete and search</button></div>
+    </dialog>
 
     <nav class="bottom-tabs" aria-label="Monitor views">
       <div class="tab-list" role="tablist">
@@ -205,6 +242,7 @@
           </span>
           <span>Nodes</span>
         </button>
+        <button id="library-tab" class="tab-button" type="button" role="tab" aria-selected="false" data-tab="library"><span class="ui-icon tab-icon icon-library" aria-hidden="true"></span><span>Library</span></button>
         <button id="settings-tab" class="tab-button" type="button" role="tab" aria-selected="false" data-tab="settings">
           <span class="ui-icon tab-icon icon-settings" aria-hidden="true"></span>
           <span>Settings</span>

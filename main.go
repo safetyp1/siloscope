@@ -35,6 +35,7 @@ const (
 var staticFiles embed.FS
 
 type config struct {
+	arrConfigs          map[string]arrConfig
 	address             string
 	siloURL             *url.URL
 	apiKey              string
@@ -85,6 +86,8 @@ type hostNetworkSampler struct {
 }
 
 type application struct {
+	buildMu       sync.Mutex
+	arr           *arrService
 	config        config
 	client        *http.Client
 	cache         proxyCache
@@ -102,6 +105,17 @@ func main() {
 	}
 
 	app := newApplication(cfg)
+	if enabled := strings.TrimSpace(os.Getenv("ARR_REPLACEMENTS_ENABLED")); enabled != "" && enabled != "false" {
+		if enabled != "true" {
+			log.Fatal("ARR_REPLACEMENTS_ENABLED must be true or false")
+		}
+		if len(cfg.arrConfigs) == 0 {
+			log.Fatal("Configure Sonarr or Radarr before enabling replacements")
+		}
+		if err := app.arr.open(strings.TrimSpace(os.Getenv("REPLACEMENT_DATA_DIR"))); err != nil {
+			log.Fatal(err)
+		}
+	}
 	if directory := strings.TrimSpace(os.Getenv("ACTIVITY_DATA_DIR")); directory != "" {
 		if err := app.activity.open(directory); err != nil {
 			log.Fatal("playback history storage could not be initialized: ", err)
@@ -182,8 +196,13 @@ func loadConfig() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
+	arrConfigs, err := loadArrConfig()
+	if err != nil {
+		return config{}, err
+	}
 
 	return config{
+		arrConfigs:          arrConfigs,
 		address:             address,
 		siloURL:             parsedURL,
 		apiKey:              apiKey,
@@ -198,6 +217,7 @@ func loadConfig() (config, error) {
 
 func newApplication(cfg config) *application {
 	app := &application{
+		arr:    newArrService(cfg.arrConfigs),
 		config: cfg,
 		client: &http.Client{
 			Timeout: cfg.timeout,
@@ -226,6 +246,14 @@ func (a *application) routes() http.Handler {
 		_, _ = io.WriteString(w, "ok\n")
 	})
 	mux.HandleFunc("GET /api/resources", a.proxyJSON("resources", "/api/v2/admin/system/resources", resourceCacheTTL))
+	mux.HandleFunc("GET /api/build", a.buildJSON)
+	mux.HandleFunc("GET /api/library", a.libraryConfig)
+	mux.HandleFunc("GET /api/library/items", a.libraryItems)
+	mux.HandleFunc("POST /api/library/preview", a.replacementPreview)
+	mux.HandleFunc("POST /api/library/replace", a.replacementExecute)
+	mux.HandleFunc("GET /api/library/operations", a.replacementJobs)
+	mux.HandleFunc("GET /api/library/operations/{id}", a.replacementStatus)
+	mux.HandleFunc("POST /api/library/retry-search", a.replacementRetry)
 	mux.HandleFunc("GET /api/history", a.resourceHistoryJSON)
 	mux.HandleFunc("GET /api/activity", a.activityJSON)
 	mux.HandleFunc("GET /api/processes", a.processCPUJSON)
@@ -543,7 +571,11 @@ func (a *application) fetchResponse(ctx context.Context, upstreamURL url.URL) ([
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", "Bearer "+a.config.apiKey)
 
-	response, err := a.client.Do(request)
+	client := *a.client
+	if upstreamURL.Path == strings.TrimRight(a.config.siloURL.Path, "/")+"/api/v2/admin/system/build" {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, "", err
 	}
@@ -569,6 +601,12 @@ func (a *application) fetchResponse(ctx context.Context, upstreamURL url.URL) ([
 		contentType = "application/json"
 	}
 	return body, contentType, nil
+}
+
+func (a *application) buildJSON(writer http.ResponseWriter, request *http.Request) {
+	a.buildMu.Lock()
+	defer a.buildMu.Unlock()
+	a.proxyJSON("build", "/api/v2/admin/system/build", 5*time.Minute)(writer, request)
 }
 
 func securityHeaders(next http.Handler) http.Handler {

@@ -42,16 +42,23 @@ func (rules notificationRules) valid() bool {
 }
 
 type notificationDevice struct {
-	Outages      map[string]*serviceOutage  `json:"outages,omitempty"`
-	DiskActive   map[string]bool            `json:"disk_active,omitempty"`
-	Subscription webpush.Subscription       `json:"subscription"`
-	Rules        notificationRules          `json:"rules"`
-	HighSince    time.Time                  `json:"high_since"`
-	LastCPU      time.Time                  `json:"last_cpu"`
-	CPUActive    bool                       `json:"cpu_active"`
-	Seen         map[string]map[string]bool `json:"seen"`
-	SeenAt       map[string]time.Time       `json:"seen_at"`
-	LastTest     time.Time                  `json:"last_test"`
+	PendingTranscodes map[string]map[string]*transcodeCheck `json:"-"`
+	Outages           map[string]*serviceOutage             `json:"outages,omitempty"`
+	DiskActive        map[string]bool                       `json:"disk_active,omitempty"`
+	Subscription      webpush.Subscription                  `json:"subscription"`
+	Rules             notificationRules                     `json:"rules"`
+	HighSince         time.Time                             `json:"high_since"`
+	LastCPU           time.Time                             `json:"last_cpu"`
+	CPUActive         bool                                  `json:"cpu_active"`
+	Seen              map[string]map[string]bool            `json:"seen"`
+	SeenAt            map[string]time.Time                  `json:"seen_at"`
+	LastTest          time.Time                             `json:"last_test"`
+}
+
+type transcodeCheck struct {
+	Started time.Time
+	Checked bool
+	Notify  bool
 }
 
 type notificationStore struct {
@@ -251,6 +258,7 @@ func (app *application) notificationsJSON(writer http.ResponseWriter, request *h
 			device.CPUActive = false
 			device.Seen = nil
 			device.SeenAt = nil
+			device.PendingTranscodes = nil
 		}
 		device.Rules = *input.Rules
 	case "delete":

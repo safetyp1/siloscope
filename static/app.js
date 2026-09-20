@@ -30,7 +30,7 @@ const state = {
   freshness: {},
   freshnessTimer: null,
   view: "system",
-  viewScroll: { system: 0, infrastructure: 0, playing: 0, history: 0, settings: 0 },
+  viewScroll: { system: 0, infrastructure: 0, playing: 0, history: 0, settings: 0, library: 0 },
 };
 
 const chartViews = new Map();
@@ -691,6 +691,12 @@ function playbackDetails(session) {
   return { resolution: changed(sourceResolution, targetResolution), audio: changed(sourceAudio, targetAudio), toneMap };
 }
 
+function fileBitrateLabel(value) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const mbps = value / 1000;
+  return `${Number(mbps.toPrecision(3))} Mbps`;
+}
+
 function addTag(container, text, className = "") {
   if (!text) return;
   const tag = elementWithClass("span", `tag ${className}`.trim(), text);
@@ -864,6 +870,9 @@ function createSessionCard(session) {
   addTag(tags, details.resolution, "session-resolution");
   addTag(tags, details.toneMap, "session-tonemap");
   addTag(tags, details.audio, "session-audio");
+  addTag(tags, fileBitrateLabel(session.source_bitrate_kbps), "session-bitrate");
+  const bitrateTag = tags.querySelector(".session-bitrate");
+  if (bitrateTag) bitrateTag.title = `Source file bitrate: ${bitrateTag.textContent}`;
   addTag(tags, session.client_label || session.client_name, "session-client");
   const remoteTranscode = session.routing_execution_node_id || session.transcode_node_url;
   if (session.source === "plex" && remoteTranscode) {
@@ -1163,8 +1172,27 @@ function showProcesses(payload) {
   return Number.isFinite(payload.cpu_pct) ? payload : null;
 }
 
+let buildRefreshAt = 0;
+let buildPending = false;
+async function refreshBuild() {
+  if (buildPending || Date.now() < buildRefreshAt) return;
+  buildPending = true;
+  const label = document.getElementById("server-build");
+  try {
+    const info = await fetchJSON("/api/build");
+    const build = Number.isSafeInteger(info?.build_number) && info.build_number > 0 ? `Build ${info.build_number}` : "";
+    const revision = typeof info?.revision === "string" && /^[a-f0-9]{7,64}$/i.test(info.revision) ? `Revision ${info.revision.slice(0, 8)}` : "";
+    label.textContent = info?.available && (build || revision) ? `${build || revision}${info.dirty ? " (modified)" : ""}` : "Build unavailable";
+    buildRefreshAt = Date.now() + 300_000;
+  } catch {
+    label.textContent = "Build unavailable";
+    buildRefreshAt = Date.now() + 60_000;
+  } finally { buildPending = false; }
+}
+
 async function refreshResources() {
   if (state.resourceInFlight || document.visibilityState !== "visible") return;
+  void refreshBuild();
   state.resourceInFlight = true;
   try {
     const [resources, history, processes] = await Promise.allSettled([

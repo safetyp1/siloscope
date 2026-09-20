@@ -17,7 +17,7 @@
   const grid = document.querySelector(".metric-grid");
   const sections = {
     system: [
-      ["Page Indicators", ["heading", "status"]],
+      ["Page Indicators", ["heading", "status", "build"]],
       ["Disk Usage", ["disk", "disk.heading", "disk.values", "disk.bars"]],
       ["CPU", ["cpu", "cpu.heading", "cpu.value", "cpu.detail", "cpu.chart", "cpu.scale", "cpu.time", "cpu.processes"]],
       ["Bandwidth", ["network", "network.heading", "network.download", "network.upload", "network.detail", "network.chart", "network.scale", "network.time"]],
@@ -26,7 +26,7 @@
     playing: [
       ["Page Indicators", ["heading", "count", "badge"]],
       ["Session Appearance", ["cards", "posters", "title"]],
-      ["Media Details", ["subtitle", "resolution", "tonemap", "audio"]],
+      ["Media Details", ["subtitle", "resolution", "tonemap", "audio", "bitrate"]],
       ["Playback Details", ["source", "method", "client", "node", "profile", "progress", "user", "time"]],
     ],
     infrastructure: [
@@ -69,8 +69,13 @@
       visibilityRuleCount++;
     }
     for (const key of preferences.systemOrder) grid.append(panels[key]);
+    const tabs = document.querySelector(".tab-list");
+    for (const key of preferences.navOrder) {
+      const tab = tabs.querySelector(`[data-tab="${key}"]`);
+      if (tab) tabs.append(tab);
+    }
     document.documentElement.style.setProperty("--chart-height", `${preferences.chartHeight}px`);
-    window.dispatchEvent(new CustomEvent("monitor-settings-change", { detail: { chartMinutes: preferences.chartMinutes } }));
+    window.dispatchEvent(new CustomEvent("monitor-settings-change", { detail: { chartMinutes: preferences.chartMinutes, historyFilter: preferences.historyFilter } }));
   }
 
   function commit() {
@@ -87,6 +92,36 @@
 
   function renderOptions(focusKey) {
     options.replaceChildren();
+    if (activeGroup === "navigation") {
+      const order = makeSection("Bottom navigation");
+      preferences.navOrder.forEach((key, index) => {
+        const label = ({ system: "System", playing: "Playing", infrastructure: "Nodes", settings: "Settings", library: "Library" })[key];
+        const row = make("div", "settings-order-row");
+        row.append(make("span", "", label));
+        for (const [direction, delta] of [["up", -1], ["down", 1]]) {
+          const button = make("button", "icon-button");
+          button.type = "button";
+          button.title = `Move ${label} ${direction}`;
+          button.setAttribute("aria-label", button.title);
+          button.dataset.order = `${key}-${direction}`;
+          const icon = make("span", `ui-icon icon-move-${direction}`);
+          icon.setAttribute("aria-hidden", "true");
+          button.append(icon);
+          button.disabled = index + delta < 0 || index + delta >= preferences.navOrder.length;
+          button.addEventListener("click", () => {
+            const target = index + delta;
+            [preferences.navOrder[index], preferences.navOrder[target]] = [preferences.navOrder[target], preferences.navOrder[index]];
+            commit();
+            renderOptions(`${key}-${target === 0 ? "down" : target === preferences.navOrder.length - 1 ? "up" : direction}`);
+          });
+          row.append(button);
+        }
+        order.append(row);
+      });
+      options.append(order);
+      if (focusKey) options.querySelector(`[data-order="${focusKey}"]`)?.focus();
+      return;
+    }
     const definition = model.groups[activeGroup];
     if (activeGroup === "system") {
       const order = makeSection("Layout");
@@ -173,7 +208,7 @@
     if (focusKey) options.querySelector(`[data-order="${focusKey}"]`)?.focus();
   }
 
-  for (const [key, definition] of Object.entries({ ...model.groups, transcoder: { label: "Transcoder" }, notifications: { label: "Notifications" } })) {
+  for (const [key, definition] of Object.entries({ ...model.groups, navigation: { label: "Navigation" }, transcoder: { label: "Transcoder" }, notifications: { label: "Notifications" } })) {
     const button = make("button", "settings-menu-item");
     button.type = "button";
     const arrow = make("span", "", "\u203a");
@@ -219,7 +254,8 @@
   });
   document.getElementById("reset-tab-settings").addEventListener("click", () => {
     if (!activeGroup || activeGroup === "transcoder" || activeGroup === "notifications") return;
-    for (const [key] of model.groups[activeGroup].options) preferences.visibility[`${activeGroup}.${key}`] = true;
+    for (const [key] of model.groups[activeGroup]?.options || []) preferences.visibility[`${activeGroup}.${key}`] = true;
+    if (activeGroup === "navigation") preferences.navOrder = [...model.navOrder];
     if (activeGroup === "system") {
       preferences.systemOrder = [...model.systemOrder];
       preferences.chartHeight = 140;
@@ -233,6 +269,10 @@
     preferences = model.load(storage);
     apply();
     if (activeGroup && activeGroup !== "transcoder" && activeGroup !== "notifications") renderOptions();
+  });
+  window.addEventListener("history-filter-change", event => {
+    preferences.historyFilter = model.normalize({ historyFilter: event.detail }).historyFilter;
+    commit();
   });
   apply();
 })();

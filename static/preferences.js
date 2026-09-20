@@ -3,12 +3,14 @@
 const MonitorPreferences = (() => {
   const storageKey = "silo-monitor.ui.v1";
   const systemOrder = ["disk", "cpu", "network", "memory"];
+  const navOrder = ["system", "playing", "library", "infrastructure", "settings"];
   const groups = {
     system: {
       label: "System",
       options: [
         ["heading", "Section heading", ".resource-section > .section-heading > div"],
         ["status", "Connection light", "#connection-status"],
+        ["build", "Server build", "#server-build"],
         ["disk", "Disk usage", ".disk-panel"],
         ["disk.heading", "Heading", ".disk-heading", "disk"],
         ["disk.values", "Usage values", ".disk-summary", "disk"],
@@ -51,6 +53,7 @@ const MonitorPreferences = (() => {
         ["resolution", "Video resolution", ".session-resolution", "cards"],
         ["tonemap", "Tone mapping", ".session-tonemap", "cards"],
         ["audio", "Audio codec", ".session-audio", "cards"],
+        ["bitrate", "File bitrate", ".session-bitrate", "cards"],
         ["method", "Play method", ".session-tags .tag-method, .session-tags .tag-transcode", "cards"],
         ["client", "Client", ".session-client", "cards"],
         ["node", "Playback node", ".session-node", "cards"],
@@ -81,7 +84,7 @@ const MonitorPreferences = (() => {
   };
 
   function normalize(raw) {
-    const result = { visibility: {}, systemOrder: [...systemOrder], chartHeight: 140, chartMinutes: 5 };
+    const result = { visibility: {}, systemOrder: [...systemOrder], navOrder: [...navOrder], historyFilter: "all", chartHeight: 140, chartMinutes: 5 };
     for (const [group, definition] of Object.entries(groups)) {
       for (const [key] of definition.options) {
         const fullKey = `${group}.${key}`;
@@ -91,6 +94,8 @@ const MonitorPreferences = (() => {
     if (Array.isArray(raw?.systemOrder)) {
       result.systemOrder = [...new Set([...raw.systemOrder.filter(key => systemOrder.includes(key)), ...systemOrder])];
     }
+    if (Array.isArray(raw?.navOrder)) result.navOrder = [...new Set([...raw.navOrder.filter(key => navOrder.includes(key)), ...navOrder])];
+    if (["all", "silo", "plex"].includes(raw?.historyFilter)) result.historyFilter = raw.historyFilter;
     if (Number.isFinite(raw?.chartHeight)) result.chartHeight = Math.min(220, Math.max(100, raw.chartHeight));
     if ([2, 3, 4, 5].includes(raw?.chartMinutes)) result.chartMinutes = raw.chartMinutes;
     return result;
@@ -112,7 +117,7 @@ const MonitorPreferences = (() => {
     catch { return false; }
   }
 
-  return { storageKey, systemOrder, groups, normalize, enabled, load, save };
+  return { storageKey, systemOrder, navOrder, groups, normalize, enabled, load, save };
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = MonitorPreferences;

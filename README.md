@@ -4,6 +4,8 @@ A low-overhead, mobile-first wallboard for Silo CPU, memory, network bandwidth, 
 
 Includes recent playback activity, independent freshness indicators, free disk capacity, per-device display preferences, Silo transcoder controls, playback termination, and optional Web Push alerts for CPU, disk usage, playback, transcoding, and service outages/recovery.
 
+The Library tab optionally searches existing Sonarr/Radarr items and replaces individual files after confirmation. Destructive actions are disabled by default.
+
 ## Compatible with
 
 | Silo | Plex |
@@ -20,6 +22,7 @@ Siloscope requires Silo's native **v2 administrator API**. The integration was c
 | Operation | Silo endpoint |
 | --- | --- |
 | Resources and charts | `GET /api/v2/admin/system/resources` |
+| API server build | `GET /api/v2/admin/system/build` |
 | Playback, history, and playback alerts | `GET /api/v2/admin/sessions` |
 | Nodes and node alerts | `GET /api/v2/admin/nodes` |
 | Stop Silo playback | `POST /api/v2/admin/sessions/{session_id}/terminate` |
@@ -33,9 +36,11 @@ Use an unscoped API key owned by an enabled administrator. Session and node coll
 
 Settings reads return a version (ETag), which each save sends back in `If-Match`. A concurrent change returns a conflict and requires **Reload settings**; Siloscope does not force an overwrite or replay the write. Playback termination requires a v2 receipt confirming durable revocation for the requested session before the UI reports the request accepted. Buffered media can still finish playing after revocation.
 
+System shows the API server build number centered below **Server pulse**, with a revision fallback when available. Metadata is cached for five minutes; an unsupported or unavailable endpoint does not affect monitoring. Proxy/transcode node builds are not displayed because the current v2 node contract does not expose them. Node versions are never inferred from the API server build.
+
 ## Screenshots
 
-Mobile views captured using live server data and a read-only settings preview. Screenshots predate activity history, freshness/free-space indicators, and the latest grouped notification controls. No playback was terminated during capture.
+Mobile views captured using live server data and a read-only settings preview. Screenshots predate activity history, freshness/free-space indicators, the Library tab, navigation ordering, and the latest grouped notification controls. No playback was terminated during capture.
 
 | System | Playing |
 | --- | --- |
@@ -89,6 +94,12 @@ services:
          SILO_API_KEY: ${SILO_API_KEY:?Set SILO_API_KEY}
          PLEX_URL: ${PLEX_URL:-}
          PLEX_TOKEN: ${PLEX_TOKEN:-}
+         SONARR_URL: ${SONARR_URL:-}
+         SONARR_API_KEY: ${SONARR_API_KEY:-}
+         RADARR_URL: ${RADARR_URL:-}
+         RADARR_API_KEY: ${RADARR_API_KEY:-}
+         ARR_REPLACEMENTS_ENABLED: ${ARR_REPLACEMENTS_ENABLED:-false}
+         REPLACEMENT_DATA_DIR: /data/replacements
          PUSH_CONTACT: ${PUSH_CONTACT:-}
          PUSH_DATA_DIR: /data/push
          ACTIVITY_DATA_DIR: /data/activity
@@ -122,7 +133,7 @@ Deploy the stack. For subsequent configuration changes, edit this same stack and
 
 ### Preserve existing data
 
-The named volume at `/data` stores both playback history (`activity/history.json`) and push keys, subscriptions, rules, and alert state (`push/notifications.json`). Keep this mount writable even though the container root filesystem is read-only. Do not use `docker compose down -v` or delete the volume during updates. Back it up securely: it contains private viewing history and push credentials.
+The named volume at `/data` stores playback history (`activity/history.json`), push keys, subscriptions, rules, and alert state (`push/notifications.json`), and the optional replacement journal (`replacements/operations.json`). Keep this mount writable even though the container root filesystem is read-only. Do not use `docker compose down -v` or delete the volume during updates. Back it up securely: it contains private viewing history, media filenames, and push credentials.
 
 When moving or renaming an existing stack, reuse its actual volume name instead of creating an empty one. Find it with `docker volume ls`. For example, to retain an existing volume named `silo-performance_notification-data`, replace the top-level volume definition above with:
 
@@ -143,6 +154,10 @@ Keep the service mount as `notification-data:/data`. The external volume must al
 | `SILO_API_KEY` | required | Silo admin API key |
 | `PLEX_URL` | unset | Optional Plex Media Server base URL, usually `http://plex:32400` |
 | `PLEX_TOKEN` | unset | Plex API token (`X-Plex-Token`), required when `PLEX_URL` is set |
+| `SONARR_URL` / `SONARR_API_KEY` | unset | Optional Sonarr base URL and API key; configure together |
+| `RADARR_URL` / `RADARR_API_KEY` | unset | Optional Radarr base URL and API key; configure together |
+| `ARR_REPLACEMENTS_ENABLED` | `false` | Explicit opt-in to destructive Library actions; requires administrator-only proxy access |
+| `REPLACEMENT_DATA_DIR` | `/data/replacements` in Docker/Compose | Private writable persistent journal; required when replacements are enabled |
 | `LISTEN_ADDR` | `:8080` | Address used by the Go server |
 | `MONITOR_BIND` | `127.0.0.1` | Host address published by Compose |
 | `MONITOR_PORT` | `8091` | Host port published by Compose |
@@ -179,13 +194,13 @@ On iOS 16.4 or later, add the HTTPS site to the Home Screen, open that installed
 
 Preferences are per device. CPU alerts default to 85% sustained for five minutes, a 30-minute repeat cooldown, and a recovery notification once CPU falls at least five percentage points below the threshold. CPU uses existing cached samples without another host scan. Missing or stale samples reset the sustained timer. Playback/transcode alerts are off by default and reuse the always-on history collector's ten-second polls and browser-request caches. They continue with the app closed, without additional session polls.
 
-The first successful session poll after startup, a long polling gap, or a preference change establishes a baseline without sending alerts for existing streams. Subsequent new sessions and transitions to transcoding notify once per observed transition. A new transcoding session can produce both notifications when both rules are enabled. Events of each type in one poll are grouped per source. Titles and usernames are hidden by default and can be enabled per device. CPU cooldown and subscription state survive restarts; the sustained CPU timer restarts because CPU activity during downtime is unknown.
+The first successful session poll after startup, a polling gap over 30 seconds, or a preference change establishes a baseline without sending alerts for existing streams. Subsequent new sessions trigger playback alerts immediately. Transcode alerts make one decision on the first fresh poll at least 60 seconds after a session was first observed (normally about 60-70 seconds). This is not a continuous-transcoding timer: a session playing directly at that check will not trigger a later transcode alert. Audio-only transcoding counts. Sessions that end before the check, monitoring gaps, restarts, and rule changes cancel pending checks. Playing badges and History methods remain immediate. A full notification queue permits bounded retries of the already-decided transcode alert until 90 seconds after first observation, without reclassifying it. Events in one poll are grouped per source. Titles and usernames are hidden by default and can be enabled per device. CPU cooldown and subscription state survive restarts; the sustained CPU timer restarts because CPU activity during downtime is unknown.
 
 Delivery is best-effort: Focus modes, connectivity, browser restrictions, or push-service errors may delay or prevent alerts. Sessions shorter than the polling interval can be missed. A bounded in-memory queue and one delivery worker limit resource usage; queued notifications are not retried or replayed after a restart. A full queue drops playback events; sustained service conditions can queue again at a later check. Expired subscriptions are removed after HTTP 404/410 responses. There is a limit of 32 devices, and test notifications are limited to one per device per minute. The service worker handles push/click events only and does not cache pages, credentials, or API responses. No new process scans are added; service alerts add background node-API polling when enabled.
 
 ## Activity and freshness
 
-The **history icon at the top right of Playing** opens a separate **History** screen. Its compact list shows poster artwork when available, the film or series title, episode details, and the user with a relative time. Select an item to expand its source, playback method, observed duration, and start/stop timestamps. The back arrow returns to Playing and restores its scroll position; the Playing tab stays selected while viewing history. Settings subpages use the same borderless back-arrow style. Tapping History navigation does not leave a focus outline; keyboard navigation retains visible focus indicators on controls.
+The **history icon at the top right of Playing** opens a separate **History** screen. Its compact list shows poster artwork when available, the film or series title, episode details, media player (Silo/Plex), and the user with a relative time. Only one item can be expanded at a time to show playback method, observed duration, and start/stop timestamps. The filter icon selects All, Silo, or Plex before paging and remembers the selection on this device. The back arrow returns to Playing and restores its scroll position; the Playing tab stays selected while viewing history. Settings subpages use the same borderless back-arrow style. Tapping History navigation does not leave a focus outline; keyboard navigation retains visible focus indicators on controls.
 
 History retains up to 200 session records last seen within 30 days, across Silo and Plex, with 20 records shown at a time. Records are removed when older than 30 days or displaced by the 200-entry cap, whichever comes first. Playback method is the latest observed value (Direct play, Remux, Transcoding, or Unknown). Sessions already present at startup are labelled **First seen**, not assigned an invented start time. Active records are discarded after more than 35 seconds without an observation; failed requests never create stop or monitoring-gap entries. Completed records are unaffected by polling interruptions. Duration is elapsed observed time, including pauses, not watch time or media position. Short sessions between polls can be missed.
 
@@ -206,6 +221,28 @@ To include Plex in the existing Playing screen, set both `PLEX_URL` and `PLEX_TO
 The monitor reads `/status/sessions` every 10 seconds for activity history, with a shared 10-second server cache. The browser refreshes every 15 seconds while visible. Plex movies, episodes, and music appear beside Silo streams, labeled by source, with users, clients, playback method, progress, and paused state. Posters are proxied through the monitor so the token stays on the backend. Plex does not provide a reliable session start time here, so its cards show playback state instead.
 
 The Playing badge counts sessions from both sources. Plex sessions do not affect Silo node routing or job counts. If either playback source fails, the other remains visible with an outage notice; unavailable sessions are removed until the source recovers. Leave both variables blank to disable Plex. Protect the monitor behind your existing authenticated proxy because it exposes playback activity and posters.
+
+## Library replacements
+
+Configure one or both URL/key pairs (`SONARR_URL`/`SONARR_API_KEY`, `RADARR_URL`/`RADARR_API_KEY`) to search existing managed titles in **Library**. URLs are service base URLs, optionally including their configured base path, not `/api/v3` URLs. Keys are sent only from the backend in `X-Api-Key` headers; redirects are refused. Movies search Radarr's existing catalogue; TV searches Sonarr series and then their episodes. No new titles are added.
+
+On a shared Docker network, typical addresses are `http://sonarr:8989` and `http://radarr:7878`; use the actual service names and container ports in your installation. `localhost` refers to Siloscope's own container. Set these variables in `.env` or your stack manager's environment, then redeploy/recreate the same service; restarting alone does not apply changed environment variables. Search works with `ARR_REPLACEMENTS_ENABLED=false`.
+
+TV also accepts `the simpsons s05e19` for the exact episode or `the simpsons s05` for that season, ordered by episode number. Matching is case-insensitive. An exact series title takes priority; otherwise a unique partial title resolves directly. Ambiguous titles show matching series first and retain the season/episode filter when you choose one. Only the selected series' episodes are fetched.
+
+Replacements remain disabled until `ARR_REPLACEMENTS_ENABLED=true` and a writable persistent `REPLACEMENT_DATA_DIR` are configured. **First verify that all dashboard and API routes are accessible only to authenticated administrators through your reverse proxy.** Siloscope has no built-in authentication; same-origin request checks are CSRF protection, not authorization. Anyone with dashboard access can use its configured Arr credentials. Keep keys out of browser settings and logs.
+
+**Replace** previews the exact filename, quality, and size. **Delete and search** rechecks the file and deletes only that movie file or single-episode file, then submits `MoviesSearch(movieIds)` or `EpisodeSearch(episodeIds)`. Shared multi-episode files are rejected. Movie, series, and episode records, profiles, and monitoring settings are not changed. Replacement is allowed during playback and may interrupt it; Siloscope does not stop the session first.
+
+Deletion and search are not atomic. There will be downtime, and automatic search may find nothing or download the same release. No better/different release, download, import, or automatic rollback is guaranteed. Restore options depend on your Arr recycle-bin/backup configuration. Changes in Arr between final verification and deletion cannot be locked by Siloscope; avoid concurrent file-management actions on the same item.
+
+Recent replacements distinguish search acceptance from command completion; neither confirms a downloaded/imported replacement. A known rejected search offers a **Retry search** action that never deletes again. If a deletion or search response is uncertain, inspect the item and queue in Arr directly; Siloscope will not automatically retry it. Restarted incomplete operations become uncertain and are not replayed. An unresolved operation blocks another replacement of that item, so resolve it directly in Arr. Do not delete the journal to bypass this protection.
+
+The private atomic journal retains at most 100 operations; only failed-before-search or finished-search entries are evicted for space. Unresolved entries are not silently discarded. Storage failures disable further mutations. Catalogue responses are streamed one record at a time, limited to 64 MiB / 100,000 items, and cached as compact records for one minute; the browser debounces title search and displays 50 results at a time. Catalogue reads have a 30-second deadline to accommodate large libraries; preview and operation-status reads retain an eight-second deadline. Other Arr responses remain limited to 4 MiB. Operation polling runs only while Library is visible, at five-second intervals for up to two minutes, with manual refresh afterward. There is no background catalogue scan or download poller.
+
+`REPLACEMENT_DATA_DIR` stores operation state in `operations.json`, not media files or Arr API keys. It must remain on persistent storage so incomplete operations stay blocked after a restart.
+
+The integration uses the official Sonarr/Radarr v3 API contracts and was tested with fake servers, including exact-file deletion, targeted commands, shared-file rejection, unknown outcomes, and restart recovery. Read-only catalogue searches and exact TV episode/season searches were also verified against live services. Real replacement operations and reverse-proxy access controls have not been live-validated. No real media files were deleted during development.
 
 ## Terminate playback
 
@@ -248,7 +285,11 @@ The banner's **Restart now** button requests a graceful Silo restart after confi
 
 Playback cards include video resolution (4K, 1080p, 720p, or 480p), audio codec labels such as DTS, DTS-HD MA, DD, DD+, and TrueHD, and Silo's confirmed SW/HW tone-mapping mode. Source and output are shown together when they differ. Missing details are omitted; tone mapping is never inferred from hardware video acceleration. Plex audio profiles come from the selected audio stream when available.
 
-The bottom-right Settings tab has separate System, Playing, and Nodes menus, organized into labelled groups:
+Active playback also shows source-file bitrate in decimal Mbps when reported (50,000 kbps becomes 50 Mbps), not measured bandwidth or transcode output bitrate. Silo uses `source_bitrate_kbps`; Plex uses the selected original Media bitrate. Missing or invalid values are omitted. This detail is not stored in History and can be hidden in Playing > Media Details.
+
+**Settings > Navigation** reorders all five bottom tabs with up/down controls. The default order is System, Playing, Library, Nodes, Settings. Order and the History filter are saved per device; resetting Navigation restores the default order without changing service settings.
+
+The Settings tab has separate System, Playing, and Nodes menus, organized into labelled groups:
 
 | Page | Groups |
 | --- | --- |

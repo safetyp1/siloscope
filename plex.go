@@ -52,6 +52,7 @@ type plexMetadata struct {
 		Height        int    `xml:"height,attr"`
 	} `xml:"TranscodeSession"`
 	Media []struct {
+		Bitrate         string `xml:"bitrate,attr"`
 		Selected        string `xml:"selected,attr"`
 		VideoResolution string `xml:"videoResolution,attr"`
 		VideoDecision   string `xml:"videoDecision,attr"`
@@ -71,30 +72,31 @@ type plexMetadata struct {
 }
 
 type plexPlayback struct {
-	TerminationID    string  `json:"termination_id,omitempty"`
-	ID               string  `json:"id"`
-	Source           string  `json:"source"`
-	Title            string  `json:"media_title"`
-	MediaType        string  `json:"media_type"`
-	Series           string  `json:"series_name,omitempty"`
-	Season           *int    `json:"season_number,omitempty"`
-	Episode          *int    `json:"episode_number,omitempty"`
-	EpisodeName      string  `json:"episode_name,omitempty"`
-	Subtitle         string  `json:"subtitle,omitempty"`
-	Username         string  `json:"username"`
-	Client           string  `json:"client_name"`
-	Method           string  `json:"play_method"`
-	Profile          string  `json:"profile_name,omitempty"`
-	Resolution       string  `json:"source_video_resolution,omitempty"`
-	TargetResolution string  `json:"target_resolution,omitempty"`
-	AudioCodec       string  `json:"source_audio_codec,omitempty"`
-	AudioProfile     string  `json:"source_audio_profile,omitempty"`
-	TargetAudioCodec string  `json:"target_audio_codec,omitempty"`
-	Paused           bool    `json:"is_paused"`
-	PlaybackState    string  `json:"playback_state"`
-	Duration         float64 `json:"file_duration"`
-	Position         float64 `json:"position_seconds"`
-	Poster           string  `json:"poster_url,omitempty"`
+	SourceBitrateKbps int64   `json:"source_bitrate_kbps,omitempty"`
+	TerminationID     string  `json:"termination_id,omitempty"`
+	ID                string  `json:"id"`
+	Source            string  `json:"source"`
+	Title             string  `json:"media_title"`
+	MediaType         string  `json:"media_type"`
+	Series            string  `json:"series_name,omitempty"`
+	Season            *int    `json:"season_number,omitempty"`
+	Episode           *int    `json:"episode_number,omitempty"`
+	EpisodeName       string  `json:"episode_name,omitempty"`
+	Subtitle          string  `json:"subtitle,omitempty"`
+	Username          string  `json:"username"`
+	Client            string  `json:"client_name"`
+	Method            string  `json:"play_method"`
+	Profile           string  `json:"profile_name,omitempty"`
+	Resolution        string  `json:"source_video_resolution,omitempty"`
+	TargetResolution  string  `json:"target_resolution,omitempty"`
+	AudioCodec        string  `json:"source_audio_codec,omitempty"`
+	AudioProfile      string  `json:"source_audio_profile,omitempty"`
+	TargetAudioCodec  string  `json:"target_audio_codec,omitempty"`
+	Paused            bool    `json:"is_paused"`
+	PlaybackState     string  `json:"playback_state"`
+	Duration          float64 `json:"file_duration"`
+	Position          float64 `json:"position_seconds"`
+	Poster            string  `json:"poster_url,omitempty"`
 }
 
 func loadPlexConfig() (*url.URL, string, error) {
@@ -136,6 +138,7 @@ func normalizePlexSession(metadata plexMetadata) plexPlayback {
 	video, audio := metadata.Transcode.VideoDecision, metadata.Transcode.AudioDecision
 	profile := ""
 	audioCodec, audioProfile := "", ""
+	var sourceBitrate int64
 	if len(metadata.Media) > 0 {
 		media := metadata.Media[0]
 		for _, candidate := range metadata.Media {
@@ -145,6 +148,9 @@ func normalizePlexSession(metadata plexMetadata) plexPlayback {
 			}
 		}
 		profile = media.VideoResolution
+		if bitrate, err := strconv.ParseInt(media.Bitrate, 10, 64); err == nil && bitrate > 0 {
+			sourceBitrate = bitrate
+		}
 		audioCodec = media.AudioCodec
 		if video == "" {
 			video = media.VideoDecision
@@ -177,7 +183,8 @@ func normalizePlexSession(metadata plexMetadata) plexPlayback {
 		method = "remux"
 	}
 	session := plexPlayback{
-		ID: "plex:" + metadata.Key, Source: "plex", Title: metadata.Title, MediaType: metadata.Type,
+		SourceBitrateKbps: sourceBitrate,
+		ID:                "plex:" + metadata.Key, Source: "plex", Title: metadata.Title, MediaType: metadata.Type,
 		Username: metadata.User.Title, Client: metadata.Player.Title, Method: method,
 		Resolution: profile, AudioCodec: audioCodec, AudioProfile: audioProfile,
 		Paused: metadata.Player.State == "paused", PlaybackState: metadata.Player.State,

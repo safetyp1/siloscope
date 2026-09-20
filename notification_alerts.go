@@ -57,6 +57,20 @@ func (session notificationSession) transcoding() bool {
 	return false
 }
 
+func (session notificationSession) confirmedTranscoding() bool {
+	for _, value := range []string{session.Video, session.Audio} {
+		if strings.EqualFold(value, "transcode") {
+			return true
+		}
+	}
+	method := session.Effective
+	if method == "" {
+		method = session.Method
+	}
+	method = strings.ToLower(method)
+	return strings.Contains(method, "transcode") || method == "audio"
+}
+
 func (session notificationSession) notificationDetail(source string) string {
 	label := "Media"
 	title := strings.TrimSpace(session.Title)
@@ -211,6 +225,7 @@ func (service *notificationService) observeSessions(source string, sessions []no
 	changed := false
 	for id, device := range service.store.Devices {
 		if !device.Rules.Playback && !device.Rules.Transcode {
+			delete(device.PendingTranscodes, source)
 			continue
 		}
 		if device.Seen == nil {
@@ -220,19 +235,41 @@ func (service *notificationService) observeSessions(source string, sessions []no
 			device.SeenAt = make(map[string]time.Time)
 		}
 		previous, initialized := device.Seen[source]
-		if initialized && !device.SeenAt[source].IsZero() && now.Sub(device.SeenAt[source]) <= 30*time.Second {
+		continuous := initialized && !device.SeenAt[source].IsZero() && now.Sub(device.SeenAt[source]) >= 0 && now.Sub(device.SeenAt[source]) <= 30*time.Second
+		if device.PendingTranscodes == nil {
+			device.PendingTranscodes = make(map[string]map[string]*transcodeCheck)
+		}
+		if !continuous || !device.Rules.Transcode || device.PendingTranscodes[source] == nil {
+			device.PendingTranscodes[source] = make(map[string]*transcodeCheck)
+		}
+		pending := device.PendingTranscodes[source]
+		for key := range pending {
+			if _, exists := current[key]; !exists {
+				delete(pending, key)
+			}
+		}
+		if continuous {
 			var started, transcoded []notificationSession
 			for _, session := range sessions {
 				key := session.key()
 				if key == "" {
 					continue
 				}
-				wasTranscoding, exists := previous[key]
+				_, exists := previous[key]
 				if !exists && device.Rules.Playback {
 					started = append(started, session)
 				}
-				if session.transcoding() && (!exists || !wasTranscoding) && device.Rules.Transcode {
-					transcoded = append(transcoded, session)
+				if !exists && device.Rules.Transcode {
+					pending[key] = &transcodeCheck{Started: now}
+				}
+				if check := pending[key]; check != nil && now.Sub(check.Started) >= time.Minute {
+					if !check.Checked {
+						check.Checked = true
+						check.Notify = session.confirmedTranscoding()
+					}
+					if check.Notify && now.Sub(check.Started) <= 90*time.Second {
+						transcoded = append(transcoded, session)
+					}
 				}
 			}
 			for kind, matches := range map[string][]notificationSession{"Playback": started, "Transcode": transcoded} {
@@ -243,7 +280,11 @@ func (service *notificationService) observeSessions(source string, sessions []no
 				if device.Rules.Details && len(matches) == 1 {
 					body = matches[0].notificationDetail(source)
 				}
-				service.enqueue(id, pushMessage{Title: kind + " started", Body: body, Tag: source + "-" + strings.ToLower(kind), URL: "/?view=playing"})
+				if service.enqueue(id, pushMessage{Title: kind + " started", Body: body, Tag: source + "-" + strings.ToLower(kind), URL: "/?view=playing"}) && kind == "Transcode" {
+					for _, session := range matches {
+						pending[session.key()].Notify = false
+					}
+				}
 			}
 		}
 		if !initialized || !maps.Equal(previous, current) {
