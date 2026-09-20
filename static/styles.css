@@ -361,7 +361,13 @@ h1 {
 #replacement-dialog { max-width: min(480px, calc(100% - 32px)); max-height: calc(100% - 48px); padding: 24px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); overflow-wrap: anywhere; line-height: 1.5; }
 #replacement-dialog::backdrop { background: rgb(0 0 0 / 0.65); }
 #replacement-dialog h2 { font-size: 22px; margin-top: 0; }
-.dialog-actions { display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap; }
+.dialog-actions { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-inline: -24px; }
+.dialog-actions .settings-command { width: 100%; min-width: 0; margin: 0; padding: 10px 4px; white-space: normal; text-align: center; justify-content: center; }
+.dialog-actions button:focus:not(:focus-visible) { outline: none; }
+.dialog-actions button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+#replacement-cancel { grid-column: 2 / 4; }
+#replacement-confirm { grid-column: 4 / 6; }
+#replacement-heading:focus { outline: none; }
 #replacement-confirm { color: var(--danger); }
 .icon-filter { --icon-source: url("/icons/list-filter.svg"); }
 .icon-move-up { --icon-source: url("/icons/arrow-left.svg"); transform: rotate(90deg); }

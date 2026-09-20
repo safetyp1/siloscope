@@ -110,10 +110,11 @@ const Library = (() => {
       const target = preview.target;
       document.getElementById("replacement-title").textContent = target.title;
       document.getElementById("replacement-file").textContent = [target.filename, target.quality, Number.isFinite(target.size) ? `${(target.size / 1073741824).toFixed(2)} GiB` : ""].filter(Boolean).join(" · ");
+      document.getElementById("replacement-release").textContent = `Blocklist: ${target.release_title}`;
       dialogStatus.textContent = "";
       confirm.disabled = false;
       dialog.showModal();
-      cancel.focus();
+      document.getElementById("replacement-heading").focus();
     } catch (error) { status.textContent = error.message; }
     finally { button.disabled = false; previewPending = false; }
   }
@@ -172,7 +173,7 @@ const Library = (() => {
         operations.append(row);
       }
       document.getElementById("library-operation-status").textContent = jobs.length ? "" : "No replacement operations";
-      if (Date.now() < pollUntil && jobs.some(job => ["preparing", "deleting", "deleted", "searching", "search_queued"].includes(job.state))) pollTimer = setTimeout(refreshOperations, 5000);
+      if (Date.now() < pollUntil && jobs.some(job => ["preparing", "deleting", "deleted", "blocklisting", "searching", "search_queued"].includes(job.state))) pollTimer = setTimeout(refreshOperations, 5000);
     } catch { document.getElementById("library-operation-status").textContent = "Operation history unavailable"; }
     finally { polling = false; }
   }

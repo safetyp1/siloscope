@@ -36,14 +36,16 @@ type arrFile struct {
 }
 
 type replacementTarget struct {
-	Source      string `json:"source"`
-	ItemID      int64  `json:"item_id"`
-	FileID      int64  `json:"file_id"`
-	Title       string `json:"title"`
-	Filename    string `json:"filename"`
-	Quality     string `json:"quality"`
-	Size        int64  `json:"size"`
-	Fingerprint string `json:"fingerprint"`
+	HistoryID    int64  `json:"history_id"`
+	ReleaseTitle string `json:"release_title"`
+	Source       string `json:"source"`
+	ItemID       int64  `json:"item_id"`
+	FileID       int64  `json:"file_id"`
+	Title        string `json:"title"`
+	Filename     string `json:"filename"`
+	Quality      string `json:"quality"`
+	Size         int64  `json:"size"`
+	Fingerprint  string `json:"fingerprint"`
 }
 
 type replacementPreview struct {
@@ -88,7 +90,7 @@ func (service *arrService) open(directory string) error {
 			if job == nil || id != job.ID || len(id) != 32 || (job.Target.Source != "radarr" && job.Target.Source != "sonarr") {
 				return errors.New("invalid replacement journal entry")
 			}
-			if job.State == "preparing" || job.State == "deleting" || job.State == "deleted" || job.State == "searching" {
+			if job.State == "preparing" || job.State == "deleting" || job.State == "deleted" || job.State == "blocklisting" || job.State == "searching" {
 				job.State, job.Message = "uncertain", "Interrupted operation. Check the file and queue in Sonarr/Radarr before taking further action."
 			}
 		}
@@ -135,6 +137,102 @@ func (service *arrService) saveLocked() error {
 		return errors.New("replacement journal could not be saved")
 	}
 	return nil
+}
+
+type arrHistory struct {
+	ID          int64             `json:"id"`
+	MovieID     int64             `json:"movieId"`
+	EpisodeID   int64             `json:"episodeId"`
+	EventType   string            `json:"eventType"`
+	DownloadID  string            `json:"downloadId"`
+	SourceTitle string            `json:"sourceTitle"`
+	Data        map[string]string `json:"data"`
+}
+
+func (client *arrClient) history(ctx context.Context, query url.Values) ([]arrHistory, error) {
+	query.Set("pageSize", "100")
+	query.Set("sortKey", "date")
+	query.Set("sortDirection", "descending")
+	var records []arrHistory
+	for page := 1; page <= 10; page++ {
+		query.Set("page", strconv.Itoa(page))
+		var result struct {
+			Page         int          `json:"page"`
+			TotalRecords int          `json:"totalRecords"`
+			Records      []arrHistory `json:"records"`
+		}
+		if _, err := client.request(ctx, "GET", "history", query, nil, &result); err != nil {
+			return nil, err
+		}
+		if result.Page != page || result.Records == nil || result.TotalRecords < len(records)+len(result.Records) || len(result.Records) > 100 {
+			return nil, errors.New("Release history could not be verified")
+		}
+		records = append(records, result.Records...)
+		if len(records) == result.TotalRecords {
+			return records, nil
+		}
+		if len(result.Records) == 0 {
+			break
+		}
+	}
+	return nil, errors.New("Release history exceeds the verification limit")
+}
+
+func (client *arrClient) releaseHistory(ctx context.Context, source string, itemID, fileID int64) (arrHistory, error) {
+	itemKey := "movieIds"
+	if source == "sonarr" {
+		itemKey = "episodeId"
+	}
+	imports, err := client.history(ctx, url.Values{itemKey: {strconv.FormatInt(itemID, 10)}, "eventType": {"3"}})
+	if err != nil {
+		return arrHistory{}, err
+	}
+	var imported arrHistory
+	for _, record := range imports {
+		matchesItem := record.MovieID == itemID
+		if source == "sonarr" {
+			matchesItem = record.EpisodeID == itemID
+		}
+		if !matchesItem || record.EventType != "downloadFolderImported" {
+			continue
+		}
+		for key, value := range record.Data {
+			if strings.EqualFold(key, "fileId") && value == strconv.FormatInt(fileID, 10) {
+				if imported.ID != 0 {
+					return arrHistory{}, errors.New("Ambiguous file history; replace directly in Sonarr/Radarr")
+				}
+				imported = record
+			}
+		}
+	}
+	if imported.ID <= 0 || strings.TrimSpace(imported.DownloadID) == "" {
+		return arrHistory{}, errors.New("No verified download history for this file; nothing will be deleted")
+	}
+	grabbed, err := client.history(ctx, url.Values{"downloadId": {imported.DownloadID}, "eventType": {"1"}})
+	if err != nil {
+		return arrHistory{}, err
+	}
+	if source == "sonarr" {
+		var episodeGrabs []arrHistory
+		for _, record := range grabbed {
+			if record.EpisodeID == itemID {
+				episodeGrabs = append(episodeGrabs, record)
+			}
+		}
+		grabbed = episodeGrabs
+	}
+	if len(grabbed) != 1 {
+		return arrHistory{}, errors.New("Missing or ambiguous release history for this item; replace directly in Sonarr/Radarr")
+	}
+	release := grabbed[0]
+	matchesItem := release.MovieID == itemID
+	if source == "sonarr" {
+		matchesItem = release.EpisodeID == itemID
+	}
+	if !matchesItem || release.ID <= 0 || release.DownloadID != imported.DownloadID || release.EventType != "grabbed" || strings.TrimSpace(release.SourceTitle) == "" {
+		return arrHistory{}, errors.New("Release ownership could not be verified")
+	}
+	return release, nil
 }
 
 func (client *arrClient) target(ctx context.Context, source string, itemID int64) (replacementTarget, error) {
@@ -190,13 +288,20 @@ func (client *arrClient) target(ctx context.Context, source string, itemID int64
 	if file.ID != fileID || (source == "radarr" && file.MovieID != itemID) || (source == "sonarr" && file.SeriesID != item.SeriesID) {
 		return replacementTarget{}, errors.New("File ownership could not be verified")
 	}
-	raw, _ := json.Marshal(file)
+	release, err := client.releaseHistory(ctx, source, itemID, fileID)
+	if err != nil {
+		return replacementTarget{}, err
+	}
+	raw, _ := json.Marshal(struct {
+		File    arrFile
+		Release arrHistory
+	}{file, release})
 	digest := sha256.Sum256(raw)
 	name := file.RelativePath
 	if name == "" {
 		name = file.Path
 	}
-	return replacementTarget{Source: source, ItemID: itemID, FileID: fileID, Title: title, Filename: path.Base(strings.ReplaceAll(name, "\\", "/")), Quality: file.Quality.Quality.Name, Size: file.Size, Fingerprint: hex.EncodeToString(digest[:])}, nil
+	return replacementTarget{HistoryID: release.ID, ReleaseTitle: release.SourceTitle, Source: source, ItemID: itemID, FileID: fileID, Title: title, Filename: path.Base(strings.ReplaceAll(name, "\\", "/")), Quality: file.Quality.Quality.Name, Size: file.Size, Fingerprint: hex.EncodeToString(digest[:])}, nil
 }
 
 func decodeLibraryWrite(writer http.ResponseWriter, request *http.Request, input any) bool {
@@ -372,7 +477,14 @@ func (service *arrService) replace(id string) {
 	client.mu.Lock()
 	client.expires = time.Time{}
 	client.mu.Unlock()
-	if !service.transition(id, "deleted", "File deleted; preparing search", 0) {
+	if !service.transition(id, "blocklisting", "File deleted; blocklisting the verified release", 0) {
+		return
+	}
+	if _, err := client.request(ctx, "POST", "history/failed/"+strconv.FormatInt(current.HistoryID, 10), nil, nil, nil); err != nil {
+		service.transition(id, "uncertain", "File deleted; blocklisting could not be confirmed. Check history, blocklist and queue in Sonarr/Radarr before taking further action.", 0)
+		return
+	}
+	if !service.transition(id, "deleted", "File deleted and release blocklisted; preparing search", 0) {
 		return
 	}
 	service.submitSearch(ctx, id, client, job.Target)
