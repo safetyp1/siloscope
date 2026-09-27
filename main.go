@@ -35,6 +35,8 @@ const (
 var staticFiles embed.FS
 
 type config struct {
+	ifdURL              *url.URL
+	ifdAPIKey           string
 	arrConfigs          map[string]arrConfig
 	address             string
 	siloURL             *url.URL
@@ -86,6 +88,7 @@ type hostNetworkSampler struct {
 }
 
 type application struct {
+	ifd           *ifdMonitor
 	buildMu       sync.Mutex
 	arr           *arrService
 	config        config
@@ -149,6 +152,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go app.sampleResources(ctx)
+	if app.ifd != nil {
+		go app.ifd.run(ctx)
+	}
 	go app.runActivity(ctx)
 	if app.notifications != nil {
 		go app.runNotifications(ctx)
@@ -200,8 +206,14 @@ func loadConfig() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
+	ifdURL, ifdKey, err := loadIFDConfig()
+	if err != nil {
+		return config{}, err
+	}
 
 	return config{
+		ifdURL:              ifdURL,
+		ifdAPIKey:           ifdKey,
 		arrConfigs:          arrConfigs,
 		address:             address,
 		siloURL:             parsedURL,
@@ -235,11 +247,15 @@ func newApplication(cfg config) *application {
 	if cfg.hostNetworkStatsDir != "" || cfg.hostProcDir != "" {
 		app.network = &hostNetworkSampler{procDir: cfg.hostProcDir, statsDir: cfg.hostNetworkStatsDir}
 	}
+	if cfg.ifdURL != nil {
+		app.ifd = &ifdMonitor{url: cfg.ifdURL, key: cfg.ifdAPIKey, client: &http.Client{Timeout: defaultTimeout, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}}
+	}
 	return app
 }
 
 func (a *application) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ifd", a.ifdJSON)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)

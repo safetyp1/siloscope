@@ -396,7 +396,7 @@ h1 {
 .freshness { color: var(--muted); font-size: 12px; margin: 0 0 16px; overflow-wrap: anywhere; }
 .freshness-group { display: flex; flex-wrap: wrap; gap: 0 20px; }
 .freshness.is-stale, .stale-data .disk-value { color: var(--warning); }
-.resource-section.stale-data .metric-grid, .resource-section.stale-data .disk-list, .node-grid.stale-data, .session-card.stale-data { opacity: 0.55; }
+.resource-section.stale-data .metric-grid > :not(.ifd-panel), .resource-section.stale-data .disk-list, .node-grid.stale-data, .session-card.stale-data { opacity: 0.55; }
 .disk-summary { flex-wrap: wrap; }
 .node-card.stale-data .node-stats, .node-card.stale-data .node-resources { opacity: 0.6; }
 .network-panel.stale-data .network-values, .network-panel.stale-data .chart-wrap { opacity: 0.6; }
@@ -745,6 +745,25 @@ h2 {
   background: var(--surface);
   box-shadow: none;
 }
+
+.ifd-panel { grid-column: 1 / -1; }
+.ifd-section-heading, .ifd-files-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ifd-values { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 4px 0 8px; }
+.ifd-values > div { display: flex; flex-wrap: wrap; align-content: start; align-items: baseline; gap: 5px; min-width: 0; }
+.ifd-values .network-direction { flex-basis: 100%; }
+.ifd-values strong { font-size: 24px; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.ifd-fetched { color: var(--download); }
+.ifd-served { color: var(--upload); }
+.ifd-connections strong { color: var(--primary); }
+.ifd-values strong small { font-size: 11px; font-weight: 500; white-space: nowrap; }
+.ifd-files { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.ifd-files h3 { margin: 0 0 12px; font-size: 12px; }
+.ifd-file-list { list-style: none; margin: 0; padding: 0; }
+.ifd-file-list li { padding: 10px 0; border-top: 1px solid rgb(255 255 255 / 0.06); }
+.ifd-file-name { display: block; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
+.ifd-file-details { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 5px; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.ifd-file-speed { color: var(--download); }
+.ifd-panel.ifd-stale .ifd-values, .ifd-panel.ifd-stale .chart-wrap { opacity: 0.55; }
 
 .disk-panel {
   margin-bottom: 12px;

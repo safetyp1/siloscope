@@ -1,12 +1,13 @@
 # Siloscope
 
-A mobile-friendly dashboard for monitoring Silo, viewing Silo and Plex playback, and managing media replacements with Sonarr and Radarr.
+A mobile-friendly dashboard for monitoring Silo and InfiniDysk, viewing Silo and Plex playback, and managing media replacements with Sonarr and Radarr.
 
 ## What you can do
 
 | When you need to... | Siloscope provides... |
 | --- | --- |
 | Spot server pressure before it affects playback | CPU, memory, bandwidth, disk usage, free space, and top-process views |
+| Monitor Usenet fetching and streaming | InfiniDysk fetched/served throughput, connections in use, and active-file activity |
 | See who is watching and troubleshoot a stream | Combined Silo/Plex playback, progress, client details, quality, bitrate, and playback method |
 | Review recent viewing activity | Playback history with Silo/Plex filters, users, durations, and timestamps |
 | Check playback infrastructure | Node health, resource usage, routed streams, and jobs |
@@ -26,6 +27,7 @@ A mobile-friendly dashboard for monitoring Silo, viewing Silo and Plex playback,
 Logos identify compatible services; no affiliation or endorsement is implied. See [logo sources](docs/images/LOGOS.md).
 
 Sonarr and Radarr are optional integrations for searching and replacing existing library items.
+InfiniDysk is an optional integration for System statistics and active-file monitoring, verified with IFD 1.5.0. See [InfiniDysk setup](#infinidysk-setup).
 
 ## Requirements
 
@@ -92,6 +94,8 @@ services:
          SILO_API_KEY: ${SILO_API_KEY:?Set SILO_API_KEY}
          PLEX_URL: ${PLEX_URL:-}
          PLEX_TOKEN: ${PLEX_TOKEN:-}
+         IFD_URL: ${IFD_URL:-}
+         IFD_API_KEY: ${IFD_API_KEY:-}
          SONARR_URL: ${SONARR_URL:-}
          SONARR_API_KEY: ${SONARR_API_KEY:-}
          RADARR_URL: ${RADARR_URL:-}
@@ -154,6 +158,8 @@ Replace the example name with your actual volume name and keep the service mount
 | `SILO_API_KEY` | required | Silo admin API key |
 | `PLEX_URL` | unset | Optional Plex Media Server base URL, usually `http://plex:32400` |
 | `PLEX_TOKEN` | unset | Plex server-owner token; required with `PLEX_URL` ([find your token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/)) |
+| `IFD_URL` | unset | Optional InfiniDysk backend URL, for example `http://nzbdav:8080` on a shared private Docker network |
+| `IFD_API_KEY` | unset | Same value as InfiniDysk's `FRONTEND_BACKEND_API_KEY`; required with `IFD_URL`, kept server-side |
 | `SONARR_URL` / `SONARR_API_KEY` | unset | TV library integration; configure together, usually `http://sonarr:8989` |
 | `RADARR_URL` / `RADARR_API_KEY` | unset | Movie library integration; configure together, usually `http://radarr:7878` |
 | `ARR_REPLACEMENTS_ENABLED` | `false` | Explicit opt-in to destructive Library actions; requires administrator-only proxy access |
@@ -186,9 +192,27 @@ Set `PUSH_CONTACT`, open Siloscope over HTTPS, and enable notifications on each 
 
 Alerts can arrive with the dashboard closed. Delivery depends on connectivity and device permissions; Siloscope cannot alert while it is down.
 
+## InfiniDysk setup
+
+InfiniDysk uses the private backend (normally port 8080), not its port 3000 browser interface. Do not publish its backend port for this integration. Generate a shared secret with `openssl rand -hex 32`, set it as `FRONTEND_BACKEND_API_KEY` in the InfiniDysk stack and as `IFD_API_KEY` in Siloscope, then recreate both services. Recreating IFD may briefly interrupt streams or downloads. Keep the existing normal IFD API key unchanged: that key supports statistics but cannot authenticate the active-file WebSocket in IFD 1.5.0.
+
+For Dockhand or Portainer, supply the generated value through each stack's environment configuration. Both containers must share a private Docker network. In the Siloscope service, use:
+
+```yaml
+environment:
+   IFD_URL: http://nzbdav:8080
+   IFD_API_KEY: ${IFD_API_KEY}
+```
+
+Replace `nzbdav` with your IFD service's network name if different. In the IFD service, map `FRONTEND_BACKEND_API_KEY: ${FRONTEND_BACKEND_API_KEY}` under `environment`, supplying the same generated value. Keep secrets out of Git. Leave both Siloscope IFD variables unset to disable the integration.
+
+Throughput is sampled every five seconds; fetched throughput uses IFD's recorded byte totals and may lag while those totals are persisted. Served throughput uses its cumulative byte counter. Per-file fetching speed is derived from live read updates; unknown values appear as `--`, not zero.
+
+Under **Settings > System**, move the InfiniDysk panel up or down, toggle its individual elements, or change the shared graph height and time window. These preferences are saved per device. Existing saved panel orders are preserved, with InfiniDysk appended until repositioned.
+
 ## Monitoring and playback
 
-- **System:** resource charts, free disk space, top CPU processes, and the Silo API server build.
+- **System:** resource charts, free disk space, top CPU processes, and the Silo API server build. Optional InfiniDysk monitoring adds fetched/served throughput, connections in use, and active filenames with fetching speed and bytes fetched. No provider names are displayed.
 - **Playing:** Silo and Plex sessions together, including users, clients, progress, resolution, audio details, source-file bitrate, and direct-play/transcode status.
 - **History:** recent activity with All/Silo/Plex filters and expandable session details. Retains up to 200 records within 30 days; durations represent observed sessions, not exact watch time.
 - **Nodes:** playback-node health, resource usage, routed streams, and jobs. Stale or unavailable data is clearly marked.

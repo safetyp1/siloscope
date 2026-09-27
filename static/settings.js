@@ -21,6 +21,7 @@
       ["Disk Usage", ["disk", "disk.heading", "disk.values", "disk.bars"]],
       ["CPU", ["cpu", "cpu.heading", "cpu.value", "cpu.detail", "cpu.chart", "cpu.scale", "cpu.time", "cpu.processes"]],
       ["Bandwidth", ["network", "network.heading", "network.download", "network.upload", "network.detail", "network.chart", "network.scale", "network.time"]],
+      ["InfiniDysk", ["ifd", "ifd.heading", "ifd.status", "ifd.fetched", "ifd.served", "ifd.connections", "ifd.chart", "ifd.scale", "ifd.time", "ifd.files", "ifd.speed", "ifd.bytes"]],
       ["Memory", ["memory", "memory.value", "memory.detail", "memory.chart", "memory.scale", "memory.time"]],
     ],
     playing: [
@@ -197,7 +198,7 @@
         });
         const displayLabel = key === "heading" ? "Page heading"
           : key === "cards" ? `Show ${activeGroup === "playing" ? "session" : "node"} cards`
-          : ["disk", "cpu", "network", "memory"].includes(key) ? "Show panel"
+          : ["disk", "cpu", "network", "ifd", "memory"].includes(key) ? "Show panel"
           : key === "cpu.processes" ? "Top processes" : label;
         row.append(make("span", "", displayLabel), input);
         fields.append(row);

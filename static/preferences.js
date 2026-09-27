@@ -2,7 +2,7 @@
 
 const MonitorPreferences = (() => {
   const storageKey = "silo-monitor.ui.v1";
-  const systemOrder = ["disk", "cpu", "network", "memory"];
+  const systemOrder = ["disk", "cpu", "network", "ifd", "memory"];
   const navOrder = ["system", "playing", "library", "infrastructure", "settings"];
   const groups = {
     system: {
@@ -31,6 +31,18 @@ const MonitorPreferences = (() => {
         ["network.chart", "Graph", ".network-panel .chart-wrap", "network"],
         ["network.scale", "Graph scale", ".network-panel .chart-scale", "network.chart"],
         ["network.time", "Time labels", ".network-panel .chart-footer", "network.chart"],
+        ["ifd", "InfiniDysk", ".ifd-panel"],
+        ["ifd.heading", "Heading", ".ifd-heading", "ifd"],
+        ["ifd.status", "Connection status", "#ifd-status", "ifd"],
+        ["ifd.fetched", "Fetched throughput", ".ifd-fetched", "ifd"],
+        ["ifd.served", "Served throughput", ".ifd-served", "ifd"],
+        ["ifd.connections", "Connections in use", ".ifd-connections", "ifd"],
+        ["ifd.chart", "Graph", ".ifd-panel .chart-wrap", "ifd"],
+        ["ifd.scale", "Graph scale", ".ifd-panel .chart-scale", "ifd.chart"],
+        ["ifd.time", "Time labels", ".ifd-panel .chart-footer", "ifd.chart"],
+        ["ifd.files", "Active files", ".ifd-files", "ifd"],
+        ["ifd.speed", "File fetching speed", ".ifd-file-speed", "ifd.files"],
+        ["ifd.bytes", "File bytes fetched", ".ifd-file-bytes", "ifd.files"],
         ["memory", "Memory", ".ram-panel"],
         ["memory.value", "Current usage", ".ram-panel .metric-header > div", "memory"],
         ["memory.detail", "Capacity", "#ram-detail", "memory"],
