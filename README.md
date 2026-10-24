@@ -86,7 +86,7 @@ Set `SILO_URL`, `SILO_API_KEY`, and `HOST_NETWORK_INTERFACE` in your stack's env
 ```yaml
 services:
    silo-monitor:
-      image: ghcr.io/jasjeetsuri/silo-monitor:latest
+      image: ghcr.io/safetyp1/silo-monitor:latest
       pull_policy: always
       restart: unless-stopped
       environment:
@@ -174,7 +174,7 @@ Replace the example name with your actual volume name and keep the service mount
 | `PUSH_DATA_DIR` | `/data/push` in Compose | Persistent notification data; required when push is enabled |
 | `ACTIVITY_DATA_DIR` | `/data/activity` in Docker/Compose | Persistent playback history; set explicitly for standalone binaries |
 
-The image is published for AMD64 and ARM64 at `ghcr.io/jasjeetsuri/silo-monitor:latest`.
+The image is published for AMD64 and ARM64 at `ghcr.io/safetyp1/silo-monitor:latest`.
 
 ## Push notifications
 
