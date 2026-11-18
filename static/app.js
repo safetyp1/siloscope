@@ -848,8 +848,19 @@ function createSessionCard(session) {
   }
 
   const copy = elementWithClass("div", "session-copy");
+  const heading = elementWithClass("div", "session-heading");
+  heading.append(elementWithClass("div", "session-title", sessionTitle(session)));
+  const ends = PlaybackTime.endTime(session);
+  if (ends) {
+    const endsLabel = document.createElement("time");
+    endsLabel.className = "session-ends";
+    endsLabel.dateTime = ends.toISOString();
+    endsLabel.textContent = `Ends ${PlaybackTime.formatClock(ends)}`;
+    endsLabel.title = `Estimated finish: ${ends.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
+    heading.append(endsLabel);
+  }
   copy.append(
-    elementWithClass("div", "session-title", sessionTitle(session)),
+    heading,
     elementWithClass("div", "session-subtitle", sessionSubtitle(session)),
   );
 
