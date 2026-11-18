@@ -848,8 +848,8 @@ function createSessionCard(session) {
   }
 
   const copy = elementWithClass("div", "session-copy");
-  const heading = elementWithClass("div", "session-heading");
-  heading.append(elementWithClass("div", "session-title", sessionTitle(session)));
+  const subtitleRow = elementWithClass("div", "session-subtitle-row");
+  subtitleRow.append(elementWithClass("span", "session-subtitle", sessionSubtitle(session)));
   const ends = PlaybackTime.endTime(session);
   if (ends) {
     const endsLabel = document.createElement("time");
@@ -857,11 +857,11 @@ function createSessionCard(session) {
     endsLabel.dateTime = ends.toISOString();
     endsLabel.textContent = `Ends ${PlaybackTime.formatClock(ends)}`;
     endsLabel.title = `Estimated finish: ${ends.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
-    heading.append(endsLabel);
+    subtitleRow.append(endsLabel);
   }
   copy.append(
-    heading,
-    elementWithClass("div", "session-subtitle", sessionSubtitle(session)),
+    elementWithClass("div", "session-title", sessionTitle(session)),
+    subtitleRow,
   );
 
   const tags = elementWithClass("div", "session-tags");
