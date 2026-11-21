@@ -27,7 +27,10 @@ A mobile-friendly dashboard for monitoring Silo and InfiniDysk, viewing Silo and
 Logos identify compatible services; no affiliation or endorsement is implied. See [logo sources](docs/images/LOGOS.md).
 
 Sonarr and Radarr are optional integrations for searching and replacing existing library items.
-InfiniDysk is an optional integration for System statistics and active-file monitoring, verified with IFD 1.5.0. See [InfiniDysk setup](#infinidysk-setup).
+InfiniDysk is an optional integration for System statistics and active-file monitoring.
+**Only InfiniDysk 2.x is supported; IFD 1.x is not supported.**
+The integration uses the 2.x live API (including `v2.0.0-beta.10`).
+See [InfiniDysk setup](#infinidysk-setup).
 
 ## Requirements
 
@@ -164,8 +167,8 @@ Replace the example name with your actual volume name and keep the service mount
 | `SILO_API_KEY` | required | Silo admin API key |
 | `PLEX_URL` | unset | Optional Plex Media Server base URL, usually `http://plex:32400` |
 | `PLEX_TOKEN` | unset | Plex server-owner token; required with `PLEX_URL` ([find your token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/)) |
-| `IFD_URL` | unset | Optional InfiniDysk backend URL, for example `http://nzbdav:8080` on a shared private Docker network |
-| `IFD_API_KEY` | unset | Same value as InfiniDysk's `FRONTEND_BACKEND_API_KEY`; required with `IFD_URL`, kept server-side |
+| `IFD_URL` | unset | Optional InfiniDysk 2.x base URL, for example `http://infinidysk:3000` on a shared private Docker network |
+| `IFD_API_KEY` | unset | InfiniDysk 2.x **Admin API** key (`auth.api_key`), not its SABnzbd API key; required with `IFD_URL`, kept server-side |
 | `LIBRARY_ENABLED` | `false` | Set `true` to show Library and enable its API; otherwise Arr settings are ignored and replacement storage is not opened |
 | `SONARR_URL` / `SONARR_API_KEY` | unset | TV library integration; configure together, usually `http://sonarr:8989` |
 | `RADARR_URL` / `RADARR_API_KEY` | unset | Movie library integration; configure together, usually `http://radarr:7878` |
@@ -201,19 +204,32 @@ Alerts can arrive with the dashboard closed. Delivery depends on connectivity an
 
 ## InfiniDysk setup
 
-InfiniDysk uses the private backend (normally port 8080), not its port 3000 browser interface. Do not publish its backend port for this integration. Generate a shared secret with `openssl rand -hex 32`, set it as `FRONTEND_BACKEND_API_KEY` in the InfiniDysk stack and as `IFD_API_KEY` in Siloscope, then recreate both services. Recreating IFD may briefly interrupt streams or downloads. Keep the existing normal IFD API key unchanged: that key supports statistics but cannot authenticate the active-file WebSocket in IFD 1.5.0.
+**InfiniDysk 2.x only.** Its UI and API share port **3000**. Use the base address
+reachable from the Siloscope container, without an `/api/v1` suffix.
+In InfiniDysk's Settings, find **Admin API → API key** (`auth.api_key`) and set
+that value as `IFD_API_KEY` in Siloscope. This is separate from the SABnzbd API key
+used by Arr apps. The old `FRONTEND_BACKEND_API_KEY` setting from IFD 1.x is not
+used. No extra backend port, WebSocket secret, or Prometheus setting is needed.
 
 For Dockhand or Portainer, supply the generated value through each stack's environment configuration. Both containers must share a private Docker network. In the Siloscope service, use:
 
 ```yaml
 environment:
-   IFD_URL: http://nzbdav:8080
+   IFD_URL: http://infinidysk:3000
    IFD_API_KEY: ${IFD_API_KEY}
 ```
 
-Replace `nzbdav` with your IFD service's network name if different. In the IFD service, map `FRONTEND_BACKEND_API_KEY: ${FRONTEND_BACKEND_API_KEY}` under `environment`, supplying the same generated value. Keep secrets out of Git. Leave both Siloscope IFD variables unset to disable the integration.
+Replace `infinidysk` with your IFD service's network name if different. Keep
+secrets out of Git and recreate Siloscope after changing its environment.
+Leave both Siloscope IFD variables unset to disable the integration.
 
-Throughput is sampled every five seconds; fetched throughput uses IFD's recorded byte totals and may lag while those totals are persisted. Served throughput uses its cumulative byte counter. Per-file fetching speed is derived from live read updates; unknown values appear as `--`, not zero.
+Siloscope polls the authenticated `/api/v1/live` endpoint every two seconds.
+Fetched and served throughput use IFD's live `fetch_bps` and `read_bps` rates.
+Connections in use sum each provider's `active` connections. Per-file fetching
+speed and bytes sum the read's provider sources; cache hits and shared fetches
+are not counted as new provider fetches. Provider names, client identities, and
+full file paths are not sent to the dashboard. Idle values are zero; failed or
+stale samples appear as `--` with gaps in the chart.
 
 Under **Settings > System**, move the InfiniDysk panel up or down, toggle its individual elements, or change the shared graph height and time window. These preferences are saved per device. Existing saved panel orders are preserved, with InfiniDysk appended until repositioned.
 

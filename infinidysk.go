@@ -4,18 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
-	"math"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/gorilla/websocket"
-	"github.com/prometheus/common/expfmt"
 )
+
+const ifdPollInterval = 2 * time.Second
 
 type ifdRead struct {
 	ID      string   `json:"id"`
@@ -40,18 +42,29 @@ type ifdSnapshot struct {
 	History        []ifdSample `json:"history"`
 }
 
+type ifdLive struct {
+	Timestamp int64   `json:"at"`
+	Fetched   *uint64 `json:"fetch_bps"`
+	Served    *uint64 `json:"read_bps"`
+	Providers []struct {
+		Active *uint64 `json:"active"`
+	} `json:"providers"`
+	Reads []struct {
+		ID      *uint64 `json:"id"`
+		Path    string  `json:"path"`
+		Sources []struct {
+			Bytes *uint64 `json:"bytes"`
+			Rate  *uint64 `json:"bps"`
+		} `json:"sources"`
+	} `json:"reads"`
+}
+
 type ifdMonitor struct {
-	mu              sync.RWMutex
-	url             *url.URL
-	key             string
-	client          *http.Client
-	data            ifdSnapshot
-	previousFetched float64
-	previousServed  float64
-	previousAt      time.Time
-	readsAt         time.Time
-	liveAt          time.Time
-	connected       bool
+	mu     sync.RWMutex
+	url    *url.URL
+	key    string
+	client *http.Client
+	data   ifdSnapshot
 }
 
 func loadIFDConfig() (*url.URL, string, error) {
@@ -61,93 +74,103 @@ func loadIFDConfig() (*url.URL, string, error) {
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || key == "" {
-		return nil, "", errors.New("IFD_URL must be an absolute HTTP(S) backend URL without credentials, query or fragment, and IFD_API_KEY is required")
+		return nil, "", errors.New("IFD_URL must be an absolute HTTP(S) InfiniDysk 2.x URL without credentials, query or fragment, and IFD_API_KEY must be its Admin API key")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
 	return parsed, key, nil
 }
 
-func (monitor *ifdMonitor) get(ctx context.Context, suffix string) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, monitor.url.String()+suffix, nil)
+func (monitor *ifdMonitor) get(ctx context.Context) ([]byte, error) {
+	endpoint := *monitor.url
+	endpoint.Path += "/api/v1/live"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("x-api-key", monitor.key)
+	request.Header.Set("X-Api-Key", monitor.key)
+	request.Header.Set("Accept", "application/json")
 	response, err := monitor.client.Do(request)
 	if err != nil {
-		return nil, errors.New("IFD request failed")
+		return nil, fmt.Errorf("IFD 2.x live request failed: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, errors.New("IFD endpoint unavailable")
+		return nil, fmt.Errorf("IFD 2.x live endpoint returned HTTP %d; check IFD_URL and the Admin API key", response.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if len(body) > maxResponseBytes {
-		return nil, errors.New("IFD response too large")
+		return nil, errors.New("IFD response exceeded 4 MiB")
 	}
 	return body, err
 }
 
-func ifdMetrics(body []byte) (float64, *float64, error) {
-	parser := expfmt.TextParser{}
-	families, err := parser.TextToMetricFamilies(strings.NewReader(string(body)))
-	if err != nil {
-		return 0, nil, err
+func (live ifdLive) files(now time.Time) ([]ifdRead, *float64, error) {
+	sampledAt := time.UnixMilli(live.Timestamp)
+	if live.Timestamp <= 0 || now.Sub(sampledAt) > 15*time.Second || sampledAt.Sub(now) > 15*time.Second {
+		return nil, nil, errors.New("IFD 2.x live sample is missing, stale or ahead of the local clock")
 	}
-	served := families["nzbdav_bytes_served_total"]
-	if served == nil || len(served.Metric) != 1 || served.Metric[0].Counter == nil {
-		return 0, nil, errors.New("IFD byte counter unavailable")
+	if live.Fetched == nil || live.Served == nil || live.Providers == nil || live.Reads == nil || len(live.Reads) > 1000 {
+		return nil, nil, errors.New("IFD 2.x returned invalid live statistics")
 	}
-	var connections *float64
-	for _, metric := range families["nzbdav_nntp_pool_connections"].GetMetric() {
-		for _, label := range metric.Label {
-			if label.GetName() == "state" && label.GetValue() == "active" && metric.Gauge != nil {
-				if connections == nil {
-					connections = new(float64)
-				}
-				*connections += metric.Gauge.GetValue()
-			}
+	connections := new(float64)
+	for _, provider := range live.Providers {
+		if provider.Active == nil {
+			return nil, nil, errors.New("IFD 2.x returned invalid connection statistics")
 		}
+		*connections += float64(*provider.Active)
 	}
-	bytes := served.Metric[0].Counter.GetValue()
-	if !ifdNumber(bytes) || (connections != nil && !ifdNumber(*connections)) {
-		return 0, nil, errors.New("Invalid IFD metrics")
+	files := make([]ifdRead, 0, len(live.Reads))
+	seen := make(map[uint64]bool, len(live.Reads))
+	for _, read := range live.Reads {
+		if read.ID == nil || seen[*read.ID] || read.Path == "" || read.Sources == nil {
+			return nil, nil, errors.New("IFD 2.x returned an invalid active read")
+		}
+		seen[*read.ID] = true
+		file := ifdRead{ID: strconv.FormatUint(*read.ID, 10), Name: path.Base(read.Path), Fetched: new(float64), Rate: new(float64)}
+		// Sources count provider fetches, not bytes served from cache to the reader.
+		for _, source := range read.Sources {
+			if source.Bytes == nil || source.Rate == nil {
+				return nil, nil, errors.New("IFD 2.x returned invalid per-file fetching statistics")
+			}
+			*file.Fetched += float64(*source.Bytes)
+			*file.Rate += float64(*source.Rate)
+		}
+		files = append(files, file)
 	}
-	return bytes, connections, nil
-}
-
-func ifdNumber(value float64) bool { return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0) }
-
-func ifdRate(current, previous float64, elapsed time.Duration) *float64 {
-	if elapsed <= 0 || elapsed > 15*time.Second || !ifdNumber(current) || !ifdNumber(previous) || current < previous {
-		return nil
-	}
-	rate := (current - previous) / elapsed.Seconds()
-	return &rate
+	return files, connections, nil
 }
 
 func (monitor *ifdMonitor) sample(ctx context.Context) {
-	metricsBody, metricsErr := monitor.get(ctx, "/metrics")
-	statsBody, statsErr := monitor.get(ctx, "/api?mode=server_stats&output=json")
-	var stats struct {
-		Total *float64 `json:"total"`
+	body, err := monitor.get(ctx)
+	var live ifdLive
+	if err == nil {
+		err = json.Unmarshal(body, &live)
 	}
-	served, connections, parseErr := ifdMetrics(metricsBody)
-	statsParseErr := json.Unmarshal(statsBody, &stats)
 	now := time.Now()
+	var files []ifdRead
+	var connections *float64
+	if err == nil {
+		files, connections, err = live.files(now)
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if err != nil {
+		log.Printf("InfiniDysk monitoring: %v", err)
+	}
 	monitor.mu.Lock()
 	defer monitor.mu.Unlock()
 	point := ifdSample{Timestamp: now.UnixMilli()}
-	monitor.data.Available = metricsErr == nil && statsErr == nil && parseErr == nil && statsParseErr == nil && stats.Total != nil && ifdNumber(*stats.Total)
-	if monitor.data.Available {
-		point.Fetched = ifdRate(*stats.Total, monitor.previousFetched, now.Sub(monitor.previousAt))
-		point.Served = ifdRate(served, monitor.previousServed, now.Sub(monitor.previousAt))
-		monitor.previousFetched, monitor.previousServed, monitor.previousAt = *stats.Total, served, now
-		monitor.data.Connections, monitor.data.SampledAt = connections, now.UnixMilli()
-	} else {
-		monitor.previousAt = time.Time{}
-		monitor.data.Connections = nil
+	if err == nil {
+		if monitor.data.Available && monitor.data.SampledAt == live.Timestamp {
+			return
+		}
+		fetched, served := float64(*live.Fetched), float64(*live.Served)
+		point.Fetched, point.Served = &fetched, &served
+		monitor.data.SampledAt = live.Timestamp
 	}
+	monitor.data.Available, monitor.data.FilesAvailable = err == nil, err == nil
+	monitor.data.Files, monitor.data.Connections = files, connections
 	monitor.data.History = append(monitor.data.History, point)
 	for len(monitor.data.History) > 0 && monitor.data.History[0].Timestamp < now.Add(-historyWindow).UnixMilli() {
 		monitor.data.History = monitor.data.History[1:]
@@ -155,9 +178,8 @@ func (monitor *ifdMonitor) sample(ctx context.Context) {
 }
 
 func (monitor *ifdMonitor) run(ctx context.Context) {
-	go monitor.stream(ctx)
 	monitor.sample(ctx)
-	ticker := time.NewTicker(resourceInterval)
+	ticker := time.NewTicker(ifdPollInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -169,125 +191,7 @@ func (monitor *ifdMonitor) run(ctx context.Context) {
 	}
 }
 
-func (monitor *ifdMonitor) message(topic, message string, now time.Time) error {
-	monitor.mu.Lock()
-	defer monitor.mu.Unlock()
-	switch topic {
-	case "ls":
-		var live struct {
-			ActiveReads *int  `json:"activeReads"`
-			Timestamp   int64 `json:"ts"`
-		}
-		if err := json.Unmarshal([]byte(message), &live); err != nil {
-			return err
-		}
-		if live.ActiveReads == nil || *live.ActiveReads < 0 || live.Timestamp < now.Add(-30*time.Second).UnixMilli() {
-			return errors.New("Invalid IFD heartbeat")
-		}
-		monitor.liveAt = now
-		if *live.ActiveReads == 0 {
-			monitor.data.Files = []ifdRead{}
-			monitor.readsAt = now
-		}
-	case "ar":
-		var payload struct {
-			Reads []ifdRead `json:"reads"`
-		}
-		if err := json.Unmarshal([]byte(message), &payload); err != nil {
-			return err
-		}
-		if payload.Reads == nil || len(payload.Reads) > 1000 {
-			return errors.New("Invalid IFD reads")
-		}
-		previous := make(map[string]ifdRead, len(monitor.data.Files))
-		for _, read := range monitor.data.Files {
-			previous[read.ID] = read
-		}
-		for index := range payload.Reads {
-			read := &payload.Reads[index]
-			read.Rate = nil
-			if read.ID == "" || (read.Fetched != nil && !ifdNumber(*read.Fetched)) {
-				return errors.New("Invalid IFD read")
-			}
-			if old, exists := previous[read.ID]; exists && read.Fetched != nil && old.Fetched != nil {
-				read.Rate = ifdRate(*read.Fetched, *old.Fetched, now.Sub(monitor.readsAt))
-			}
-		}
-		monitor.data.Files, monitor.readsAt = payload.Reads, now
-	}
-	return nil
-}
-
-func (monitor *ifdMonitor) stream(ctx context.Context) {
-	backoff := time.Second
-	for ctx.Err() == nil {
-		monitor.streamOnce(ctx)
-		monitor.mu.Lock()
-		monitor.connected = false
-		monitor.readsAt, monitor.liveAt = time.Time{}, time.Time{}
-		monitor.data.Files = nil
-		monitor.mu.Unlock()
-		timer := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		backoff = min(backoff*2, 30*time.Second)
-	}
-}
-
-func (monitor *ifdMonitor) streamOnce(ctx context.Context) {
-	endpoint := *monitor.url
-	endpoint.Path += "/ws"
-	if endpoint.Scheme == "https" {
-		endpoint.Scheme = "wss"
-	} else {
-		endpoint.Scheme = "ws"
-	}
-	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second, Proxy: http.ProxyFromEnvironment}
-	connection, response, err := dialer.DialContext(ctx, endpoint.String(), nil)
-	if response != nil && response.Body != nil {
-		defer response.Body.Close()
-	}
-	if err != nil {
-		return
-	}
-	defer connection.Close()
-	stop := context.AfterFunc(ctx, func() { connection.Close() })
-	defer stop()
-	connection.SetReadLimit(maxResponseBytes)
-	connection.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	if connection.WriteMessage(websocket.TextMessage, []byte(monitor.key)) != nil {
-		return
-	}
-	if connection.WriteJSON(map[string][]string{"sub": {"ar", "ls"}}) != nil {
-		return
-	}
-	monitor.mu.Lock()
-	monitor.connected = true
-	monitor.mu.Unlock()
-	for {
-		connection.SetReadDeadline(time.Now().Add(30 * time.Second))
-		_, raw, err := connection.ReadMessage()
-		if err != nil {
-			return
-		}
-		var envelope struct {
-			Topic   string
-			Message string
-		}
-		if json.Unmarshal(raw, &envelope) != nil {
-			return
-		}
-		if monitor.message(envelope.Topic, envelope.Message, time.Now()) != nil {
-			return
-		}
-	}
-}
-
-func (a *application) ifdJSON(w http.ResponseWriter, request *http.Request) {
+func (a *application) ifdJSON(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if a.ifd == nil {
@@ -299,14 +203,10 @@ func (a *application) ifdJSON(w http.ResponseWriter, request *http.Request) {
 	snapshot := a.ifd.data
 	snapshot.Configured = true
 	snapshot.Available = snapshot.Available && time.Since(time.UnixMilli(snapshot.SampledAt)) < 15*time.Second
-	snapshot.FilesAvailable = a.ifd.connected && !a.ifd.readsAt.IsZero() && time.Since(a.ifd.liveAt) < 15*time.Second
-	snapshot.Files = append([]ifdRead{}, snapshot.Files...)
-	if !snapshot.FilesAvailable {
+	snapshot.FilesAvailable = snapshot.FilesAvailable && snapshot.Available
+	if !snapshot.Available {
+		snapshot.Connections = nil
 		snapshot.Files = nil
-	} else if time.Since(a.ifd.readsAt) > 3*time.Second {
-		for index := range snapshot.Files {
-			snapshot.Files[index].Rate = new(float64)
-		}
 	}
 	json.NewEncoder(w).Encode(snapshot)
 }
