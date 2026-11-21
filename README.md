@@ -35,6 +35,11 @@ InfiniDysk is an optional integration for System statistics and active-file moni
 - Docker on AMD64 or ARM64. Host bandwidth and process monitoring require a Linux Docker host.
 - Optional: a Plex server-owner token, Sonarr/Radarr API keys, and HTTPS for push notifications.
 
+Silo playback supports both legacy `series_name`/`episode_name` fields and newer
+`series_title`/`media_title` episode rows. Signed Silo artwork routes are proxied
+through Siloscope, so the browser does not need access to Silo's Docker address.
+The administrator API key is never sent with artwork requests.
+
 **Restrict access to trusted administrators through an authenticated reverse proxy.** Siloscope has no built-in login. Dashboard access can allow stopping playback, changing settings, restarting Silo, and deleting media files when replacements are enabled.
 
 ## Screenshots

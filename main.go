@@ -276,6 +276,7 @@ func (a *application) routes() http.Handler {
 	mux.HandleFunc("GET /api/notifications", a.notificationsJSON)
 	mux.HandleFunc("POST /api/notifications", a.notificationsJSON)
 	mux.HandleFunc("GET /api/sessions", a.proxyJSON("sessions", "/api/v2/admin/sessions", a.config.cacheTTL))
+	mux.HandleFunc("GET /api/silo/poster", a.siloPoster)
 	mux.HandleFunc("GET /api/plex/sessions", a.plexSessionsJSON)
 	mux.HandleFunc("GET /api/plex/poster", a.plexPoster)
 	mux.HandleFunc("GET /api/nodes", a.proxyJSON("nodes", "/api/v2/admin/nodes", a.config.cacheTTL))
@@ -512,6 +513,9 @@ func (a *application) fetch(ctx context.Context, cacheKey, upstreamPath string, 
 	if upstreamPath == "/api/v2/admin/sessions" || upstreamPath == "/api/v2/admin/nodes" {
 		body, err = a.fetchCollection(ctx, upstreamURL)
 		contentType = "application/json"
+		if err == nil && upstreamPath == "/api/v2/admin/sessions" {
+			body, err = a.normalizeSiloSessions(body)
+		}
 	} else {
 		body, contentType, err = a.fetchResponse(ctx, upstreamURL)
 	}

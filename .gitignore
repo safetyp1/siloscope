@@ -2,4 +2,5 @@
 .env
 silo-monitor
 *_test.go
+!silo_sessions_test.go
 *.test.cjs
