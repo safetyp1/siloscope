@@ -4,10 +4,27 @@ const preferences = require("../static/preferences.js");
 
 test("defaults show all existing content", () => {
   const value = preferences.normalize(null);
-  assert.ok(Object.values(value.visibility).every(Boolean));
+  assert.ok(Object.entries(value.visibility).filter(([key]) => !["playing.ends", "playing.adaptive"].includes(key)).every(([, visible]) => visible));
   assert.equal(value.chartHeight, 140);
   assert.equal(value.chartMinutes, 5);
   assert.deepEqual(value.systemOrder, ["disk", "cpu", "network", "ifd", "memory"]);
+});
+
+test("playback enhancements are independently opt-in and survive storage", () => {
+  const defaults = preferences.normalize(null);
+  assert.equal(defaults.visibility["playing.ends"], false);
+  assert.equal(defaults.visibility["playing.adaptive"], false);
+  const value = preferences.normalize({ visibility: { "playing.ends": true, "playing.adaptive": false } });
+  assert.equal(preferences.enabled(value, "playing", "ends"), true);
+  assert.equal(preferences.enabled(value, "playing", "adaptive"), false);
+  value.visibility["playing.adaptive"] = true;
+  let stored;
+  assert.equal(preferences.save({ setItem: (_, raw) => { stored = raw; } }, value), true);
+  const restored = preferences.load({ getItem: () => stored });
+  assert.equal(preferences.enabled(restored, "playing", "adaptive"), true);
+  restored.visibility["playing.cards"] = false;
+  assert.equal(preferences.enabled(restored, "playing", "ends"), false);
+  assert.equal(preferences.enabled(restored, "playing", "adaptive"), false);
 });
 
 test("saved values are bounded and order is repaired", () => {

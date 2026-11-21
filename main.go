@@ -38,6 +38,7 @@ type config struct {
 	ifdURL              *url.URL
 	ifdAPIKey           string
 	arrConfigs          map[string]arrConfig
+	libraryEnabled      bool
 	address             string
 	siloURL             *url.URL
 	apiKey              string
@@ -108,7 +109,7 @@ func main() {
 	}
 
 	app := newApplication(cfg)
-	if enabled := strings.TrimSpace(os.Getenv("ARR_REPLACEMENTS_ENABLED")); enabled != "" && enabled != "false" {
+	if enabled := strings.TrimSpace(os.Getenv("ARR_REPLACEMENTS_ENABLED")); cfg.libraryEnabled && enabled != "" && enabled != "false" {
 		if enabled != "true" {
 			log.Fatal("ARR_REPLACEMENTS_ENABLED must be true or false")
 		}
@@ -202,9 +203,17 @@ func loadConfig() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
-	arrConfigs, err := loadArrConfig()
-	if err != nil {
-		return config{}, err
+	librarySetting := strings.TrimSpace(os.Getenv("LIBRARY_ENABLED"))
+	if librarySetting != "" && librarySetting != "false" && librarySetting != "true" {
+		return config{}, errors.New("LIBRARY_ENABLED must be true or false")
+	}
+	libraryEnabled := librarySetting == "true"
+	var arrConfigs map[string]arrConfig
+	if libraryEnabled {
+		arrConfigs, err = loadArrConfig()
+		if err != nil {
+			return config{}, err
+		}
 	}
 	ifdURL, ifdKey, err := loadIFDConfig()
 	if err != nil {
@@ -215,6 +224,7 @@ func loadConfig() (config, error) {
 		ifdURL:              ifdURL,
 		ifdAPIKey:           ifdKey,
 		arrConfigs:          arrConfigs,
+		libraryEnabled:      libraryEnabled,
 		address:             address,
 		siloURL:             parsedURL,
 		apiKey:              apiKey,
@@ -263,13 +273,21 @@ func (a *application) routes() http.Handler {
 	})
 	mux.HandleFunc("GET /api/resources", a.proxyJSON("resources", "/api/v2/admin/system/resources", resourceCacheTTL))
 	mux.HandleFunc("GET /api/build", a.buildJSON)
-	mux.HandleFunc("GET /api/library", a.libraryConfig)
-	mux.HandleFunc("GET /api/library/items", a.libraryItems)
-	mux.HandleFunc("POST /api/library/preview", a.replacementPreview)
-	mux.HandleFunc("POST /api/library/replace", a.replacementExecute)
-	mux.HandleFunc("GET /api/library/operations", a.replacementJobs)
-	mux.HandleFunc("GET /api/library/operations/{id}", a.replacementStatus)
-	mux.HandleFunc("POST /api/library/retry-search", a.replacementRetry)
+	if a.config.libraryEnabled {
+		mux.HandleFunc("GET /api/library", a.libraryConfig)
+		mux.HandleFunc("GET /api/library/items", a.libraryItems)
+		mux.HandleFunc("POST /api/library/preview", a.replacementPreview)
+		mux.HandleFunc("POST /api/library/replace", a.replacementExecute)
+		mux.HandleFunc("GET /api/library/operations", a.replacementJobs)
+		mux.HandleFunc("GET /api/library/operations/{id}", a.replacementStatus)
+		mux.HandleFunc("POST /api/library/retry-search", a.replacementRetry)
+	} else {
+		disabled := func(w http.ResponseWriter, _ *http.Request) {
+			writeJSONError(w, http.StatusNotFound, "Library is disabled")
+		}
+		mux.HandleFunc("/api/library", disabled)
+		mux.HandleFunc("/api/library/", disabled)
+	}
 	mux.HandleFunc("GET /api/history", a.resourceHistoryJSON)
 	mux.HandleFunc("GET /api/activity", a.activityJSON)
 	mux.HandleFunc("GET /api/processes", a.processCPUJSON)
@@ -290,6 +308,15 @@ func (a *application) routes() http.Handler {
 	if err != nil {
 		panic(err)
 	}
+	index, err := fs.ReadFile(content, "index.html")
+	if err != nil {
+		panic(err)
+	}
+	page := strings.Replace(string(index), `data-library-enabled="false"`, `data-library-enabled="`+strconv.FormatBool(a.config.libraryEnabled)+`"`, 1)
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		http.ServeContent(w, r, "index.html", time.Time{}, strings.NewReader(page))
+	})
 	mux.Handle("/", http.FileServer(http.FS(content)))
 
 	return securityHeaders(mux)

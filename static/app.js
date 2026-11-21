@@ -33,6 +33,11 @@ const state = {
   viewScroll: { system: 0, infrastructure: 0, playing: 0, history: 0, settings: 0, library: 0 },
 };
 
+if (document.documentElement.dataset.libraryEnabled !== "true") {
+  delete state.viewScroll.library;
+  document.querySelector('[data-tab="library"]').remove();
+}
+
 const chartViews = new Map();
 
 const elements = {
@@ -848,9 +853,20 @@ function createSessionCard(session) {
   }
 
   const copy = elementWithClass("div", "session-copy");
+  const subtitleRow = elementWithClass("div", "session-subtitle-row");
+  subtitleRow.append(elementWithClass("span", "session-subtitle", sessionSubtitle(session)));
+  const ends = PlaybackTime.endTime(session);
+  if (ends) {
+    const label = document.createElement("time");
+    label.className = "session-ends";
+    label.dateTime = ends.toISOString();
+    label.textContent = `Ends ${PlaybackTime.formatClock(ends)}`;
+    label.title = `Estimated finish: ${ends.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
+    subtitleRow.append(label);
+  }
   copy.append(
     elementWithClass("div", "session-title", sessionTitle(session)),
-    elementWithClass("div", "session-subtitle", sessionSubtitle(session)),
+    subtitleRow,
   );
 
   const tags = elementWithClass("div", "session-tags");

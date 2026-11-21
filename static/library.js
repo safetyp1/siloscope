@@ -1,6 +1,7 @@
 "use strict";
 
 const Library = (() => {
+  if (document.documentElement.dataset.libraryEnabled !== "true") return null;
   const section = document.querySelector('[data-view="library"]');
   const form = document.getElementById("library-search");
   const query = document.getElementById("library-query");

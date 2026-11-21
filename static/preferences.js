@@ -58,6 +58,7 @@ const MonitorPreferences = (() => {
         ["count", "Stream count", "#session-count"],
         ["badge", "Tab badge", "#playing-badge"],
         ["cards", "Session cards", "#sessions"],
+        ["adaptive", "Larger adaptive text", "", "cards", false],
         ["posters", "Posters", ".session-card .poster", "cards"],
         ["title", "Title", ".session-title", "cards"],
         ["subtitle", "Episode and media details", ".session-subtitle", "cards"],
@@ -71,6 +72,7 @@ const MonitorPreferences = (() => {
         ["node", "Playback node", ".session-node", "cards"],
         ["profile", "Profile", ".session-profile", "cards"],
         ["progress", "Playback progress", ".session-card .progress-track", "cards"],
+        ["ends", "Estimated end time", ".session-ends", "cards", false],
         ["user", "User", ".session-footer .avatar, .session-user", "cards"],
         ["time", "Start time / playback state", ".session-time", "cards"],
       ],
@@ -98,9 +100,9 @@ const MonitorPreferences = (() => {
   function normalize(raw) {
     const result = { visibility: {}, systemOrder: [...systemOrder], navOrder: [...navOrder], historyFilter: "all", chartHeight: 140, chartMinutes: 5 };
     for (const [group, definition] of Object.entries(groups)) {
-      for (const [key] of definition.options) {
+      for (const [key, , , , defaultValue = true] of definition.options) {
         const fullKey = `${group}.${key}`;
-        result.visibility[fullKey] = typeof raw?.visibility?.[fullKey] === "boolean" ? raw.visibility[fullKey] : true;
+        result.visibility[fullKey] = typeof raw?.visibility?.[fullKey] === "boolean" ? raw.visibility[fullKey] : defaultValue;
       }
     }
     if (Array.isArray(raw?.systemOrder)) {

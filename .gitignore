@@ -3,4 +3,6 @@
 silo-monitor
 *_test.go
 !silo_sessions_test.go
+!library_config_test.go
 *.test.cjs
+!scripts/playback-time.test.cjs

@@ -101,6 +101,7 @@ services:
          PLEX_TOKEN: ${PLEX_TOKEN:-}
          IFD_URL: ${IFD_URL:-}
          IFD_API_KEY: ${IFD_API_KEY:-}
+         LIBRARY_ENABLED: ${LIBRARY_ENABLED:-false}
          SONARR_URL: ${SONARR_URL:-}
          SONARR_API_KEY: ${SONARR_API_KEY:-}
          RADARR_URL: ${RADARR_URL:-}
@@ -165,6 +166,7 @@ Replace the example name with your actual volume name and keep the service mount
 | `PLEX_TOKEN` | unset | Plex server-owner token; required with `PLEX_URL` ([find your token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/)) |
 | `IFD_URL` | unset | Optional InfiniDysk backend URL, for example `http://nzbdav:8080` on a shared private Docker network |
 | `IFD_API_KEY` | unset | Same value as InfiniDysk's `FRONTEND_BACKEND_API_KEY`; required with `IFD_URL`, kept server-side |
+| `LIBRARY_ENABLED` | `false` | Set `true` to show Library and enable its API; otherwise Arr settings are ignored and replacement storage is not opened |
 | `SONARR_URL` / `SONARR_API_KEY` | unset | TV library integration; configure together, usually `http://sonarr:8989` |
 | `RADARR_URL` / `RADARR_API_KEY` | unset | Movie library integration; configure together, usually `http://radarr:7878` |
 | `ARR_REPLACEMENTS_ENABLED` | `false` | Explicit opt-in to destructive Library actions; requires administrator-only proxy access |
@@ -222,7 +224,21 @@ Under **Settings > System**, move the InfiniDysk panel up or down, toggle its in
 - **History:** recent activity with All/Silo/Plex filters and expandable session details. Retains up to 200 records within 30 days; durations represent observed sessions, not exact watch time.
 - **Nodes:** playback-node health, resource usage, routed streams, and jobs. Stale or unavailable data is clearly marked.
 
+### Optional Now Playing display
+
+In **Settings → Playing**, enable **Estimated end time** under Playback Details
+to show the viewer's local finish time, or **Larger adaptive text** under Session
+Appearance to scale card text and spacing. Both are off by default, saved per
+device, and independently switchable. End times are hidden for paused sessions
+or unknown duration/position and are estimates based on the latest playback poll.
+
 ## Find and replace media
+
+**Library** is off by default. Set `LIBRARY_ENABLED=true` and configure Sonarr
+or Radarr to show its tab and enable its API. With `LIBRARY_ENABLED=false`
+(or unset), the tab is hidden, Library API requests return `404`, and Arr
+settings are ignored. Existing replacement data is left untouched.
+Recreate the container after changing this environment setting.
 
 **Library** searches titles already managed by Sonarr or Radarr; it does not add new titles. Search is available without enabling replacements.
 

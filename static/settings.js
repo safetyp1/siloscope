@@ -26,9 +26,9 @@
     ],
     playing: [
       ["Page Indicators", ["heading", "count", "badge"]],
-      ["Session Appearance", ["cards", "posters", "title"]],
+      ["Session Appearance", ["cards", "adaptive", "posters", "title"]],
       ["Media Details", ["subtitle", "resolution", "tonemap", "audio", "bitrate"]],
-      ["Playback Details", ["source", "method", "client", "node", "profile", "progress", "user", "time"]],
+      ["Playback Details", ["source", "method", "client", "node", "profile", "progress", "ends", "user", "time"]],
     ],
     infrastructure: [
       ["Page Indicators", ["heading", "summary", "badge"]],
@@ -57,10 +57,11 @@
     const rules = [];
     for (const [group, definition] of Object.entries(model.groups)) {
       for (const [key, , selector] of definition.options) {
-        if (!model.enabled(preferences, group, key)) rules.push(`${selector} { display: none !important; }`);
+        if (selector && !model.enabled(preferences, group, key)) rules.push(`${selector} { display: none !important; }`);
       }
     }
-    if (!model.enabled(preferences, "playing", "posters")) rules.push(".session-card { grid-template-columns: minmax(0, 1fr); }");
+    if (!model.enabled(preferences, "playing", "posters")) rules.push("#sessions .session-card { grid-template-columns: minmax(0, 1fr); }");
+    document.documentElement.classList.toggle("adaptive-playback-text", model.enabled(preferences, "playing", "adaptive"));
     while (visibilityRuleCount > 0) {
       visibilityStyles.deleteRule(firstVisibilityRule);
       visibilityRuleCount--;
@@ -95,7 +96,8 @@
     options.replaceChildren();
     if (activeGroup === "navigation") {
       const order = makeSection("Bottom navigation");
-      preferences.navOrder.forEach((key, index) => {
+      const visibleOrder = preferences.navOrder.filter(key => document.querySelector(`[data-tab="${key}"]`));
+      visibleOrder.forEach((key, index) => {
         const label = ({ system: "System", playing: "Playing", infrastructure: "Nodes", settings: "Settings", library: "Library" })[key];
         const row = make("div", "settings-order-row");
         row.append(make("span", "", label));
@@ -108,12 +110,14 @@
           const icon = make("span", `ui-icon icon-move-${direction}`);
           icon.setAttribute("aria-hidden", "true");
           button.append(icon);
-          button.disabled = index + delta < 0 || index + delta >= preferences.navOrder.length;
+          button.disabled = index + delta < 0 || index + delta >= visibleOrder.length;
           button.addEventListener("click", () => {
             const target = index + delta;
-            [preferences.navOrder[index], preferences.navOrder[target]] = [preferences.navOrder[target], preferences.navOrder[index]];
+            const from = preferences.navOrder.indexOf(key);
+            const to = preferences.navOrder.indexOf(visibleOrder[target]);
+            [preferences.navOrder[from], preferences.navOrder[to]] = [preferences.navOrder[to], preferences.navOrder[from]];
             commit();
-            renderOptions(`${key}-${target === 0 ? "down" : target === preferences.navOrder.length - 1 ? "up" : direction}`);
+            renderOptions(`${key}-${target === 0 ? "down" : target === visibleOrder.length - 1 ? "up" : direction}`);
           });
           row.append(button);
         }
@@ -255,7 +259,7 @@
   });
   document.getElementById("reset-tab-settings").addEventListener("click", () => {
     if (!activeGroup || activeGroup === "transcoder" || activeGroup === "notifications") return;
-    for (const [key] of model.groups[activeGroup]?.options || []) preferences.visibility[`${activeGroup}.${key}`] = true;
+    for (const [key, , , , defaultValue = true] of model.groups[activeGroup]?.options || []) preferences.visibility[`${activeGroup}.${key}`] = defaultValue;
     if (activeGroup === "navigation") preferences.navOrder = [...model.navOrder];
     if (activeGroup === "system") {
       preferences.systemOrder = [...model.systemOrder];
