@@ -28,7 +28,7 @@
       ["Page Indicators", ["heading", "count", "badge"]],
       ["Session Appearance", ["cards", "posters", "title"]],
       ["Media Details", ["subtitle", "resolution", "tonemap", "audio", "bitrate"]],
-      ["Playback Details", ["source", "method", "client", "node", "profile", "progress", "ends", "user", "time"]],
+      ["Playback Details", ["source", "method", "client", "node", "profile", "progress", "user", "time"]],
     ],
     infrastructure: [
       ["Page Indicators", ["heading", "summary", "badge"]],

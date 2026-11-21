@@ -71,7 +71,6 @@ const MonitorPreferences = (() => {
         ["node", "Playback node", ".session-node", "cards"],
         ["profile", "Profile", ".session-profile", "cards"],
         ["progress", "Playback progress", ".session-card .progress-track", "cards"],
-        ["ends", "Estimated end time", ".session-ends", "cards"],
         ["user", "User", ".session-footer .avatar, .session-user", "cards"],
         ["time", "Start time / playback state", ".session-time", "cards"],
       ],
