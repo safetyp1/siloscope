@@ -9,8 +9,97 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
+func TestActivityRefreshesExpiredSiloPosters(t *testing.T) {
+	requests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/api/v2/admin/catalog/items" || r.Header.Get("Authorization") != "Bearer test-key" || r.URL.Query().Get("limit") != "200" {
+			t.Errorf("incorrect catalog request: %s", r.URL)
+		}
+		ids := r.URL.Query()["content_ids"]
+		if len(ids) != 2 {
+			t.Errorf("expected two deduplicated item IDs, got %v", ids)
+		}
+		fmt.Fprint(w, `{"items":[{"content_id":"movie-one","poster_url":"/api/v2/item-posters/movie-one?exp=9999999999&sig=fresh"},{"content_id":"episode-one","poster_url":"/api/v2/artwork/series/poster.webp?exp=9999999999&sig=fresh"}]}`)
+	}))
+	defer upstream.Close()
+	endpoint, _ := url.Parse(upstream.URL)
+	app := newApplication(config{siloURL: endpoint, apiKey: "test-key", timeout: defaultTimeout})
+	now := time.Now()
+	expired := "/api/silo/poster?" + url.Values{"path": {"/api/v2/item-posters/movie-one?exp=1&sig=expired"}}.Encode()
+	app.activity.entries = []*playbackActivity{
+		{ID: "movie", Source: "Silo", Poster: expired, Status: "stopped", StartedAt: now, LastSeen: now},
+		{ID: "repeat", Source: "Silo", MediaItemID: "movie-one", Poster: expired, Status: "stopped", StartedAt: now, LastSeen: now},
+		{ID: "show", Source: "Silo", MediaItemID: "episode-one", Poster: "/api/silo/poster?path=expired", Status: "stopped", StartedAt: now, LastSeen: now},
+		{ID: "plex", Source: "Plex", Poster: "/api/plex/poster?id=42", Status: "stopped", StartedAt: now, LastSeen: now},
+	}
+	for range 2 {
+		recorder := httptest.NewRecorder()
+		app.activityJSON(recorder, httptest.NewRequest(http.MethodGet, "/api/activity", nil))
+		var entries []playbackActivity
+		if err := json.Unmarshal(recorder.Body.Bytes(), &entries); err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if entry.Source == "Plex" {
+				if entry.Poster != "/api/plex/poster?id=42" {
+					t.Fatal("Plex poster changed")
+				}
+				continue
+			}
+			poster, err := url.Parse(entry.Poster)
+			if err != nil || poster.Path != "/api/silo/poster" || !strings.Contains(poster.Query().Get("path"), "sig=fresh") {
+				t.Fatalf("history retained an expired poster: %+v", entry)
+			}
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("catalog refresh was not cached: %d", requests)
+	}
+	if app.activity.entries[0].Poster != expired {
+		t.Fatal("rendering changed the stored history")
+	}
+}
+
+func TestActivityPersistsSiloMediaID(t *testing.T) {
+	directory := t.TempDir()
+	history := &activityHistory{}
+	if err := history.open(directory); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	history.observe("Silo", []notificationSession{{SessionID: "one", MediaItemID: "episode-one", Title: "Pilot"}}, true, now)
+	history.observe("Silo", nil, true, now.Add(time.Second))
+	if err := history.save(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := &activityHistory{}
+	if err := reloaded.open(directory); err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.entries) != 1 || reloaded.entries[0].MediaItemID != "episode-one" {
+		t.Fatal("media identity did not survive a restart")
+	}
+}
+
+func TestActivityArtworkFailurePreservesHistory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	endpoint, _ := url.Parse(server.URL)
+	app := newApplication(config{siloURL: endpoint, timeout: defaultTimeout})
+	entries := []playbackActivity{{Source: "Silo", MediaItemID: "movie-one", Poster: "old-poster"}}
+	if err := app.refreshActivityPosters(context.Background(), entries); err == nil {
+		t.Fatal("artwork refresh failure was hidden")
+	}
+	if entries[0].Poster != "old-poster" {
+		t.Fatal("artwork outage discarded stored poster")
+	}
+}
 func TestSiloSessionCompatibility(t *testing.T) {
 	for _, current := range []bool{false, true} {
 		t.Run(fmt.Sprint(current), func(t *testing.T) {

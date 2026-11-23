@@ -16,6 +16,7 @@ import (
 )
 
 type notificationSession struct {
+	MediaItemID string          `json:"media_item_id"`
 	Poster      string          `json:"poster_url"`
 	Season      *int            `json:"season_number"`
 	Episode     *int            `json:"episode_number"`

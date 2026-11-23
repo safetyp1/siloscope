@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,7 @@ func (app *application) pollActivity(ctx context.Context) {
 }
 
 type playbackActivity struct {
+	MediaItemID     string     `json:"media_item_id,omitempty"`
 	Poster          string     `json:"poster_url,omitempty"`
 	Series          string     `json:"series_name,omitempty"`
 	Season          *int       `json:"season_number,omitempty"`
@@ -238,6 +240,9 @@ func (history *activityHistory) observe(source string, sessions []notificationSe
 			history.entries = append(history.entries, entry)
 		}
 		entry.Title = activityText(session.Title)
+		if session.MediaItemID != "" {
+			entry.MediaItemID = session.MediaItemID
+		}
 		entry.Series = activityText(session.Series)
 		entry.Season, entry.Episode = session.Season, session.Episode
 		entry.EpisodeName = activityText(session.EpisodeName)
@@ -279,12 +284,86 @@ func (app *application) activityJSON(writer http.ResponseWriter, request *http.R
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Content-Type", "application/json")
 	app.activity.mu.Lock()
-	defer app.activity.mu.Unlock()
 	app.activity.prune(time.Now())
 	entries := make([]playbackActivity, 0, len(app.activity.entries))
 	for index := len(app.activity.entries) - 1; index >= 0; index-- {
 		entry := *app.activity.entries[index]
 		entries = append(entries, entry)
 	}
+	app.activity.mu.Unlock()
+	if err := app.refreshActivityPosters(request.Context(), entries); err != nil {
+		log.Printf("playback history artwork could not be refreshed: %v", err)
+	}
 	_ = json.NewEncoder(writer).Encode(entries)
+}
+
+func activityPosterItemID(entry playbackActivity) string {
+	if entry.MediaItemID != "" {
+		return entry.MediaItemID
+	}
+	target, err := url.Parse(entry.Poster)
+	if err != nil {
+		return ""
+	}
+	if target.Path == "/api/silo/poster" {
+		target, err = url.Parse(target.Query().Get("path"))
+		if err != nil {
+			return ""
+		}
+	}
+	if id, ok := strings.CutPrefix(target.Path, "/api/v2/item-posters/"); ok && id != "" && !strings.Contains(id, "/") {
+		return id
+	}
+	return ""
+}
+
+func (app *application) refreshActivityPosters(ctx context.Context, entries []playbackActivity) error {
+	query := url.Values{"limit": {"200"}}
+	ids := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.Source == "Silo" {
+			if id := activityPosterItemID(entry); id != "" && !ids[id] {
+				ids[id] = true
+				query.Add("content_ids", id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	body, _, err := app.fetch(ctx, "activity-posters:"+query.Encode(), "/api/v2/admin/catalog/items?"+query.Encode(), time.Minute)
+	if err != nil {
+		return err
+	}
+	var collection struct {
+		Items []struct {
+			ID     string `json:"content_id"`
+			Poster string `json:"poster_url"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &collection); err != nil {
+		return err
+	}
+	if collection.Items == nil {
+		return errors.New("Silo returned an invalid history artwork collection")
+	}
+	posters := make(map[string]string, len(collection.Items))
+	for _, item := range collection.Items {
+		if ids[item.ID] {
+			posters[item.ID] = item.Poster
+		}
+	}
+	for index := range entries {
+		if entries[index].Source != "Silo" {
+			continue
+		}
+		if id := activityPosterItemID(entries[index]); ids[id] {
+			poster, err := app.siloPosterURL(posters[id])
+			if err != nil {
+				return err
+			}
+			entries[index].Poster = poster
+		}
+	}
+	return nil
 }

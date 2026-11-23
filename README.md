@@ -42,6 +42,10 @@ Silo playback supports both legacy `series_name`/`episode_name` fields and newer
 `series_title`/`media_title` episode rows. Signed Silo artwork routes are proxied
 through Siloscope, so the browser does not need access to Silo's Docker address.
 The administrator API key is never sent with artwork requests.
+Playback history refreshes signed Silo poster links from the catalog using
+stored media IDs. Older entries with item-poster links can also be refreshed;
+older entries containing only an expired artwork-storage URL cannot be reliably
+matched back to a catalog item.
 
 **Restrict access to trusted administrators through an authenticated reverse proxy.** Siloscope has no built-in login. Dashboard access can allow stopping playback, changing settings, restarting Silo, and deleting media files when replacements are enabled.
 

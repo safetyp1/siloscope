@@ -533,7 +533,9 @@ func (a *application) fetch(ctx context.Context, cacheKey, upstreamPath string, 
 	a.cache.mu.Unlock()
 
 	upstreamURL := *a.config.siloURL
-	upstreamURL.Path = strings.TrimRight(upstreamURL.Path, "/") + upstreamPath
+	path, query, _ := strings.Cut(upstreamPath, "?")
+	upstreamURL.Path = strings.TrimRight(upstreamURL.Path, "/") + path
+	upstreamURL.RawQuery = query
 	var body []byte
 	var contentType string
 	var err error

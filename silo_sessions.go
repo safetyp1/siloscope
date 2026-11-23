@@ -50,16 +50,9 @@ func (a *application) normalizeSiloSessions(body []byte) ([]byte, error) {
 		if poster == "" {
 			continue
 		}
-		target, err := url.Parse(poster)
+		poster, err := a.siloPosterURL(poster)
 		if err != nil {
-			return nil, fmt.Errorf("parse Silo poster URL: %w", err)
-		}
-		if (!target.IsAbs() && target.Host == "") || (target.Scheme == a.config.siloURL.Scheme && target.Host == a.config.siloURL.Host) {
-			if _, err := siloPosterPath(target.RequestURI()); err == nil {
-				poster = "/api/silo/poster?" + url.Values{"path": {target.RequestURI()}}.Encode()
-			} else if !target.IsAbs() {
-				poster = a.config.siloURL.ResolveReference(target).String()
-			}
+			return nil, err
 		}
 		session["poster_url"], err = json.Marshal(poster)
 		if err != nil {
@@ -69,6 +62,24 @@ func (a *application) normalizeSiloSessions(body []byte) ([]byte, error) {
 	return json.Marshal(sessions)
 }
 
+func (a *application) siloPosterURL(poster string) (string, error) {
+	if poster == "" {
+		return "", nil
+	}
+	target, err := url.Parse(poster)
+	if err != nil {
+		return "", fmt.Errorf("parse Silo poster URL: %w", err)
+	}
+	if (!target.IsAbs() && target.Host == "") || (target.Scheme == a.config.siloURL.Scheme && target.Host == a.config.siloURL.Host) {
+		if _, err := siloPosterPath(target.RequestURI()); err == nil {
+			return "/api/silo/poster?" + url.Values{"path": {target.RequestURI()}}.Encode(), nil
+		}
+		if !target.IsAbs() {
+			return a.config.siloURL.ResolveReference(target).String(), nil
+		}
+	}
+	return poster, nil
+}
 func (a *application) siloPoster(writer http.ResponseWriter, request *http.Request) {
 	target, err := siloPosterPath(request.URL.Query().Get("path"))
 	if err != nil {
