@@ -104,6 +104,7 @@ services:
       environment:
          SILO_URL: ${SILO_URL:?Set SILO_URL}
          SILO_API_KEY: ${SILO_API_KEY:?Set SILO_API_KEY}
+         IGNORE_USERS: ${IGNORE_USERS:-}
          PLEX_URL: ${PLEX_URL:-}
          PLEX_TOKEN: ${PLEX_TOKEN:-}
          IFD_URL: ${IFD_URL:-}
@@ -169,6 +170,7 @@ Replace the example name with your actual volume name and keep the service mount
 | --- | --- | --- |
 | `SILO_URL` | required | Silo base URL reachable by the monitor container |
 | `SILO_API_KEY` | required | Silo admin API key |
+| `IGNORE_USERS` | unset | One username or a comma-separated list to ignore in Silo and Plex playback and history; case-insensitive exact matches, with surrounding whitespace ignored |
 | `PLEX_URL` | unset | Optional Plex Media Server base URL, usually `http://plex:32400` |
 | `PLEX_TOKEN` | unset | Plex server-owner token; required with `PLEX_URL` ([find your token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/)) |
 | `IFD_URL` | unset | Optional InfiniDysk 2.x base URL, for example `http://infinidysk:3000` on a shared private Docker network |
@@ -189,6 +191,8 @@ Replace the example name with your actual volume name and keep the service mount
 | `ACTIVITY_DATA_DIR` | `/data/activity` in Docker/Compose | Persistent playback history; set explicitly for standalone binaries |
 
 The image is published for AMD64 and ARM64 at `ghcr.io/safetyp1/silo-monitor:latest`.
+
+To ignore users, set `IGNORE_USERS=alex,bob` in `.env` (or `IGNORE_USERS=alex` for one user) and recreate the monitor after changing it. Use account usernames, not Silo profile names. Matching sessions are excluded from playback, new history, and playback/transcode alerts. Existing saved history is hidden, not deleted, and becomes visible again if the username is removed from the list. Leave the variable empty to include everyone. This only filters Siloscope; it does not stop playback or change Silo/Plex accounts.
 
 ## Push notifications
 

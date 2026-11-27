@@ -48,6 +48,7 @@ type config struct {
 	hostNetworkStatsDir string
 	plexURL             *url.URL
 	plexToken           string
+	ignoredUsers        map[string]bool
 }
 
 type cacheEntry struct {
@@ -234,7 +235,22 @@ func loadConfig() (config, error) {
 		hostNetworkStatsDir: strings.TrimSpace(os.Getenv("HOST_NETWORK_STATS_DIR")),
 		plexURL:             plexURL,
 		plexToken:           plexToken,
+		ignoredUsers:        parseIgnoredUsers(os.Getenv("IGNORE_USERS")),
 	}, nil
+}
+
+func parseIgnoredUsers(raw string) map[string]bool {
+	users := make(map[string]bool)
+	for _, username := range strings.Split(raw, ",") {
+		if username = strings.ToLower(strings.TrimSpace(username)); username != "" {
+			users[username] = true
+		}
+	}
+	return users
+}
+
+func (cfg config) ignoresUser(username string) bool {
+	return cfg.ignoredUsers[strings.ToLower(strings.TrimSpace(username))]
 }
 
 func newApplication(cfg config) *application {

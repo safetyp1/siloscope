@@ -288,6 +288,9 @@ func (app *application) activityJSON(writer http.ResponseWriter, request *http.R
 	entries := make([]playbackActivity, 0, len(app.activity.entries))
 	for index := len(app.activity.entries) - 1; index >= 0; index-- {
 		entry := *app.activity.entries[index]
+		if app.config.ignoresUser(entry.User) {
+			continue
+		}
 		entries = append(entries, entry)
 	}
 	app.activity.mu.Unlock()

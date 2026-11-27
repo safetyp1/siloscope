@@ -254,7 +254,7 @@ func (app *application) plexSessionData(ctx context.Context) ([]byte, error) {
 	}
 	sessions := make([]plexPlayback, 0, len(container.Videos)+len(container.Tracks))
 	for _, metadata := range append(container.Videos, container.Tracks...) {
-		if metadata.Player.State != "stopped" {
+		if metadata.Player.State != "stopped" && !app.config.ignoresUser(metadata.User.Title) {
 			sessions = append(sessions, normalizePlexSession(metadata))
 		}
 	}

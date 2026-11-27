@@ -6,6 +6,7 @@ services:
     environment:
       SILO_URL: ${SILO_URL:?Set SILO_URL in .env}
       SILO_API_KEY: ${SILO_API_KEY:?Set SILO_API_KEY in .env}
+      IGNORE_USERS: ${IGNORE_USERS:-}
       PLEX_URL: ${PLEX_URL:-}
       PLEX_TOKEN: ${PLEX_TOKEN:-}
       IFD_URL: ${IFD_URL:-}

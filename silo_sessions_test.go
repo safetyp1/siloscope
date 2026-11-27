@@ -253,3 +253,131 @@ func TestSiloPosterRejectsInvalidTargetsAndResponses(t *testing.T) {
 		}
 	}
 }
+
+func TestIgnoreUsersConfig(t *testing.T) {
+	t.Setenv("SILO_URL", "http://silo:8080")
+	t.Setenv("SILO_API_KEY", "test-key")
+	for _, raw := range []string{"", " Alex ", " Alex, BOB, ,alex,"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("IGNORE_USERS", raw)
+			cfg, err := loadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ignoresUser(" aLeX ") != (raw != "") || cfg.ignoresUser("bob") != strings.Contains(raw, "BOB") {
+				t.Fatal("username list was not normalized")
+			}
+			if cfg.ignoresUser("") || cfg.ignoresUser("Alexander") || cfg.ignoresUser("Carol") {
+				t.Fatal("matched an empty, partial, or unlisted username")
+			}
+		})
+	}
+}
+
+func TestIgnoreUsersSiloPlaybackAndHistory(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/base/api/v2/admin/sessions" {
+			fmt.Fprint(writer, `{"items":[{"session_id":"ignored","username":" ALEX ","media_title":"Hidden"},{"session_id":"visible","username":"Carol","media_title":"Visible"},{"session_id":"anonymous","media_title":"Anonymous"}]}`)
+			return
+		}
+		fmt.Fprint(writer, `{"items":[]}`)
+	}))
+	defer upstream.Close()
+	endpoint, _ := url.Parse(upstream.URL + "/base")
+	app := newApplication(config{siloURL: endpoint, apiKey: "test-key", timeout: defaultTimeout, cacheTTL: defaultCacheTTL})
+	app.config.ignoredUsers = parseIgnoredUsers("alex,bob")
+	for range 2 {
+		response := httptest.NewRecorder()
+		app.routes().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+		var sessions []notificationSession
+		if err := json.Unmarshal(response.Body.Bytes(), &sessions); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || len(sessions) != 2 || strings.Contains(response.Body.String(), "Hidden") {
+			t.Fatalf("ignored session remained in playback: %s", response.Body)
+		}
+	}
+	app.pollActivity(context.Background())
+	if len(app.activity.entries) != 2 {
+		t.Fatalf("expected two history entries, got %d", len(app.activity.entries))
+	}
+	for _, entry := range app.activity.entries {
+		if app.config.ignoresUser(entry.User) {
+			t.Fatal("ignored session was recorded")
+		}
+	}
+}
+
+func TestIgnoreUsersPlexPlaybackAndHistory(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		fmt.Fprint(writer, `<MediaContainer><Video sessionKey="1" title="Hidden"><User title="Alex"/><Player state="playing"/></Video><Track sessionKey="2" title="Hidden song"><User title="BOB"/><Player state="playing"/></Track><Video sessionKey="3" title="Visible"><User title="Carol"/><Player state="playing"/></Video></MediaContainer>`)
+	}))
+	defer upstream.Close()
+	parsed, _ := url.Parse(upstream.URL)
+	silo := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		fmt.Fprint(writer, `{"items":[]}`)
+	}))
+	defer silo.Close()
+	endpoint, _ := url.Parse(silo.URL)
+	app := newApplication(config{siloURL: endpoint, apiKey: "test-key", timeout: defaultTimeout, cacheTTL: defaultCacheTTL})
+	app.config.plexURL = parsed
+	app.config.plexToken = "test-token"
+	app.config.ignoredUsers = parseIgnoredUsers(" alex, bob ")
+	for range 2 {
+		response := httptest.NewRecorder()
+		app.routes().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/plex/sessions", nil))
+		var payload struct {
+			Enabled  bool           `json:"enabled"`
+			Sessions []plexPlayback `json:"sessions"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || !payload.Enabled || len(payload.Sessions) != 1 || payload.Sessions[0].Username != "Carol" {
+			t.Fatalf("ignored session remained in playback: %s", response.Body)
+		}
+	}
+	app.pollActivity(context.Background())
+	if len(app.activity.entries) != 1 || app.activity.entries[0].User != "Carol" {
+		t.Fatal("ignored Plex session was recorded")
+	}
+}
+
+func TestIgnoreUsersSavedHistory(t *testing.T) {
+	directory := t.TempDir()
+	var history activityHistory
+	if err := history.open(directory); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Add(-time.Minute)
+	for _, source := range []string{"Silo", "Plex"} {
+		history.observe(source, []notificationSession{{SessionID: "hidden", Username: "Alex"}, {SessionID: "visible", Username: "Carol"}}, true, now)
+		history.observe(source, nil, true, now.Add(time.Second))
+	}
+	if err := history.save(); err != nil {
+		t.Fatal(err)
+	}
+	app := newApplication(config{ignoredUsers: parseIgnoredUsers(" ALEX ")})
+	if err := app.activity.open(directory); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []int{2, 4} {
+		response := httptest.NewRecorder()
+		app.activityJSON(response, httptest.NewRequest(http.MethodGet, "/api/activity", nil))
+		var entries []playbackActivity
+		if err := json.Unmarshal(response.Body.Bytes(), &entries); err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != expected || len(app.activity.entries) != 4 {
+			t.Fatal("saved history was not filtered non-destructively")
+		}
+		if expected == 2 {
+			for _, entry := range entries {
+				if entry.User != "Carol" {
+					t.Fatal("ignored saved history remained visible")
+				}
+			}
+		}
+		app.config.ignoredUsers = nil
+	}
+}

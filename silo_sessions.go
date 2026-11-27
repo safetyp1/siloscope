@@ -32,7 +32,20 @@ func (a *application) normalizeSiloSessions(body []byte) ([]byte, error) {
 	if err := json.Unmarshal(body, &sessions); err != nil {
 		return nil, fmt.Errorf("decode Silo sessions: %w", err)
 	}
+	filtered := make([]map[string]json.RawMessage, 0, len(sessions))
 	for _, session := range sessions {
+		if len(a.config.ignoredUsers) > 0 {
+			var username string
+			if raw := session["username"]; raw != nil {
+				if err := json.Unmarshal(raw, &username); err != nil {
+					return nil, fmt.Errorf("decode Silo username: %w", err)
+				}
+			}
+			if a.config.ignoresUser(username) {
+				continue
+			}
+		}
+		filtered = append(filtered, session)
 		if series, ok := session["series_title"]; ok {
 			session["series_name"] = series
 			session["episode_name"] = session["media_title"]
@@ -59,7 +72,7 @@ func (a *application) normalizeSiloSessions(body []byte) ([]byte, error) {
 			return nil, err
 		}
 	}
-	return json.Marshal(sessions)
+	return json.Marshal(filtered)
 }
 
 func (a *application) siloPosterURL(poster string) (string, error) {
